@@ -1,0 +1,53 @@
+library(survival)
+library(survminer)
+library(ggpubr)
+library(openxlsx)
+
+data_for_plot <- cmp_incident_final
+data_for_plot$indicator <- ifelse(data_for_plot$indicator == 2, 0, data_for_plot$indicator)
+data_for_plot <- na.omit(data_for_plot)
+
+surv_object <- Surv(time = data_for_plot$age_entry, 
+                    time2 = data_for_plot$age_event, 
+                    event = data_for_plot$indicator)
+
+fit_loneliness <- survfit(surv_object ~ loneliness, data = data_for_plot)
+loneliness_summary <- summary(fit_loneliness, times = seq(38, max(data_for_plot$age_event), by = 1))
+loneliness_data <- data.frame(
+  Time = loneliness_summary$time,
+  Survival = loneliness_summary$surv,
+  Group = factor(loneliness_summary$strata, 
+                 levels = levels(loneliness_summary$strata),
+                 labels = c("Not lonely", "Lonely")),
+  LogMinusLogSurvival = log(-log(loneliness_summary$surv))
+)
+
+fit_isolation <- survfit(surv_object ~ isolation, data = data_for_plot)
+isolation_summary <- summary(fit_isolation, times = seq(38, max(data_for_plot$age_event), by = 1))
+isolation_data <- data.frame(
+  Time = isolation_summary$time,
+  Survival = isolation_summary$surv,
+  Group = factor(isolation_summary$strata, 
+                 levels = levels(isolation_summary$strata),
+                 labels = c("Not isolated", "Isolated")),
+  LogMinusLogSurvival = log(-log(isolation_summary$surv))
+)
+
+source_data_list <- list(
+  "Figure_SI_loglog" = isolation_data,
+  "Figure_Loneliness_loglog" = loneliness_data
+)
+saveRDS(source_data_list, "Log-log_plot.rds")
+write.xlsx(source_data_list, 
+           file = "Source_Data_eFigure16_LogLog_Plots.xlsx",
+           asTable = FALSE)
+
+sparse_isolation <- isolation_data[seq(1, nrow(isolation_data), by = 5), ]
+sparse_loneliness <- loneliness_data[seq(1, nrow(loneliness_data), by = 5), ]
+source_data_sparse <- list(
+  "Figure_SI_loglog_sparse" = sparse_isolation,
+  "Figure_Loneliness_loglog_sparse" = sparse_loneliness
+)
+write.xlsx(source_data_sparse, 
+           file = "Source_Data_eFigure16_LogLog_Plots_Sparse.xlsx",
+           asTable = FALSE)
