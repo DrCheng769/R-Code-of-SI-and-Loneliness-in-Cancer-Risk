@@ -1,0 +1,159 @@
+library(tidyverse)
+
+format_log_p_str <- function(log_p_e) {
+  if (is.na(log_p_e)) return("")
+  
+  log_p_10 <- log_p_e / log(10)
+  
+  if (log_p_10 > -3) {
+    p_val <- 10^log_p_10
+    return(sprintf("%.3f", p_val))
+  } else {
+    exponent <- floor(log_p_10)
+    mantissa <- 10^(log_p_10 - exponent)
+    return(sprintf("%.4fe%d", mantissa, exponent))
+  }
+}
+
+calc_cont_sex <- function(data, var_col, label) {
+  var_sym <- sym(var_col)
+  
+  grp_F <- data %>% filter(Sex == "Female") %>% pull(!!var_sym)
+  grp_M <- data %>% filter(Sex == "Male")   %>% pull(!!var_sym)
+  
+  overall_res <- sprintf("%.2f ± %.2f", mean(data[[var_col]]), sd(data[[var_col]]))
+  res_F       <- sprintf("%.2f ± %.2f", mean(grp_F), sd(grp_F))
+  res_M       <- sprintf("%.2f ± %.2f", mean(grp_M), sd(grp_M))
+  
+  t_res <- t.test(grp_F, grp_M)
+  log_p <- log(2) + pt(-abs(t_res$statistic), t_res$parameter, log.p = TRUE)
+  p_str <- format_log_p_str(log_p)
+  
+  tibble(
+    Variable = label,
+    Overall  = overall_res,
+    `Female` = res_F,
+    `Male`   = res_M,
+    `P_Value` = p_str
+  )
+}
+
+calc_cat_sex <- function(data, var_col, label, target_level = NULL) {
+  t_overall <- table(data[[var_col]])
+  t_sex     <- table(data[[var_col]], data$Sex)
+  
+  c_res <- chisq.test(t_sex)
+  log_p <- pchisq(c_res$statistic, c_res$parameter, lower.tail = FALSE, log.p = TRUE)
+  p_str <- format_log_p_str(log_p)
+  
+  levels_vec <- if (!is.null(target_level)) target_level else levels(data[[var_col]])
+  out_list <- list()
+  
+  for (lvl in levels_vec) {
+    n_o <- t_overall[lvl]; p_o <- prop.table(t_overall)[lvl] * 100
+    n_F <- t_sex[lvl, "Female"]; p_F <- prop.table(t_sex, 2)[lvl, "Female"] * 100
+    n_M <- t_sex[lvl, "Male"];   p_M <- prop.table(t_sex, 2)[lvl, "Male"] * 100
+    
+    str_o <- sprintf("%s (%.0f%%)", format(n_o, big.mark=","), p_o)
+    str_F <- sprintf("%s (%.0f%%)", format(n_F, big.mark=","), p_F)
+    str_M <- sprintf("%s (%.0f%%)", format(n_M, big.mark=","), p_M)
+    
+    row_label <- if (length(levels_vec) == 1) label else paste0("  ", lvl)
+    cur_p <- if (lvl == levels_vec[1]) p_str else ""
+    
+    out_list[[lvl]] <- tibble(
+      Variable = row_label,
+      Overall  = str_o,
+      `Female` = str_F,
+      `Male`   = str_M,
+      `P_Value` = cur_p
+    )
+  }
+  
+  if (is.null(target_level)) {
+    header_row <- tibble(
+      Variable = label, Overall = "", `Female` = "", `Male` = "", `P_Value` = p_str
+    )
+    rows <- bind_rows(out_list) %>% mutate(P_Value = "")
+    return(bind_rows(header_row, rows))
+  } else {
+    return(bind_rows(out_list))
+  }
+}
+
+df <- cmp_incident %>%
+  dplyr::select(
+    isolation, loneliness, Age, Sex, Race, UK_Center, Employment, 
+    Education, Income, Smoking_status, Alcohol_status, Family_cancer, 
+    Townsend_deprivation_index, day_exposure, diet_score, sleep_score, 
+    depress_mood, BMI, MAP, Hand_grip, Overall_health_rating
+  ) %>%
+  drop_na() %>%
+  mutate(
+    Sex = factor(Sex, levels = c("Female", "Male")),
+    isolation = as.factor(isolation),
+    loneliness = as.factor(loneliness),
+    Race = factor(Race, levels = c("Non white", "White")),
+    Family_cancer = as.factor(Family_cancer)
+  )
+
+n_overall <- nrow(df)
+n_female  <- sum(df$Sex == "Female")
+n_male    <- sum(df$Sex == "Male")
+
+row_age    <- calc_cont_sex(df, "Age", "Age, years")
+row_race   <- calc_cat_sex(df, "Race", "Ethnicity, White, n (%)", target_level = "White")
+row_center <- calc_cat_sex(df, "UK_Center", "Assessment Center")
+row_employ <- calc_cat_sex(df, "Employment", "Employment")
+row_edu    <- calc_cat_sex(df, "Education", "College/university degree, n (%)", target_level = "College/university degree")
+row_income <- calc_cat_sex(df, "Income", "Income")
+row_smoke  <- calc_cat_sex(df, "Smoking_status", "Smoking status")
+row_drink  <- calc_cat_sex(df, "Alcohol_status", "Alcohol status")
+row_fam_ca <- calc_cat_sex(df, "Family_cancer", "Family cancer history, n (%)", target_level = "1")
+row_tdi    <- calc_cont_sex(df, "Townsend_deprivation_index", "Townsend Deprivation Score")
+row_sun    <- calc_cont_sex(df, "day_exposure", "Sun exposure time, hours/day")
+row_diet   <- calc_cont_sex(df, "diet_score", "Diet Score")
+row_sleep  <- calc_cont_sex(df, "sleep_score", "Sleep Score")
+row_depress <- calc_cat_sex(df, "depress_mood", "Depress mood")
+row_bmi    <- calc_cont_sex(df, "BMI", "BMI (kg/m2)")
+row_map    <- calc_cont_sex(df, "MAP", "MAP (mmHg)")
+row_grip   <- calc_cont_sex(df, "Hand_grip", "Grip strength, kg")
+row_health <- calc_cont_sex(df, "Overall_health_rating", "Overall Health Rating")
+
+final_table_sex <- bind_rows(
+  row_age, 
+  row_race,
+  row_center,
+  row_employ,
+  row_edu,
+  row_income,
+  row_smoke,
+  row_drink,
+  row_fam_ca,
+  row_tdi,
+  row_sun,
+  row_diet,
+  row_sleep,
+  row_depress,
+  row_bmi,
+  row_map,
+  row_grip,
+  row_health
+)
+
+colnames(final_table_sex) <- c(
+  "Variable Label",
+  paste0("Overall\n(N=", format(n_overall, big.mark=","), ")"),
+  paste0("Female\n(N=", format(n_female, big.mark=","), ")"),
+  paste0("Male\n(N=", format(n_male, big.mark=","), ")"),
+  "P-Value"
+)
+
+library(flextable)
+ft <- flextable(final_table_sex) %>%
+  autofit() %>%
+  theme_booktabs() %>%
+  bold(part = "header") %>%
+  align(j = 2:5, align = "center", part = "all")
+
+save_as_docx(ft, path = "eTable1_Baseline_Stratified_by_Sex.docx")
