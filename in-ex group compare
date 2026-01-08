@@ -1,0 +1,193 @@
+library(dplyr)
+library(MASS)
+
+fmt_p <- function(p) {
+  if (is.na(p)) return("NA")
+  if (p < 0.001) {
+    return(formatC(p, format = "e", digits = 2))
+  } else {
+    return(formatC(p, format = "f", digits = 3))
+  }
+}
+
+fmt_smd <- function(d) {
+  if (is.na(d)) return("NA")
+  return(sprintf("%.3f", abs(d)))
+}
+
+calc_smd_continuous <- function(v1, v2) {
+  v1 <- na.omit(as.numeric(v1))
+  v2 <- na.omit(as.numeric(v2))
+  if(length(v1)==0 | length(v2)==0) return(NA)
+  
+  m1 <- mean(v1); m2 <- mean(v2)
+  s1 <- sd(v1); s2 <- sd(v2)
+  n1 <- length(v1); n2 <- length(v2)
+  
+  pooled_var <- ((n1 - 1) * s1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2)
+  if(pooled_var <= 0) return(0)
+  
+  return((m1 - m2) / sqrt(pooled_var))
+}
+
+calc_smd_multilevel <- function(vec1, vec2) {
+  vec1 <- as.factor(vec1[!is.na(vec1)])
+  vec2 <- as.factor(vec2[!is.na(vec2)])
+  
+  all_levs <- union(levels(vec1), levels(vec2))
+  
+  mat1 <- t(sapply(vec1, function(x) as.numeric(all_levs == x)))
+  mat2 <- t(sapply(vec2, function(x) as.numeric(all_levs == x)))
+  
+  if(ncol(mat1) <= 1) return(0)
+  
+  mean_diff <- colMeans(mat1) - colMeans(mat2)
+  
+  cov1 <- cov(mat1)
+  cov2 <- cov(mat2)
+  n1 <- nrow(mat1)
+  n2 <- nrow(mat2)
+  
+  S_pool <- ((n1 - 1) * cov1 + (n2 - 1) * cov2) / (n1 + n2 - 2)
+  
+  t2 <- t(mean_diff) %*% ginv(S_pool) %*% mean_diff
+  
+  return(sqrt(as.numeric(t2)))
+}
+
+get_row_mean_sd <- function(var, label, df1, df2) {
+  v1 <- as.numeric(df1[[var]])
+  v2 <- as.numeric(df2[[var]])
+  
+  res1 <- sprintf("%.2f (%.2f)", mean(v1, na.rm=T), sd(v1, na.rm=T))
+  res2 <- sprintf("%.2f (%.2f)", mean(v2, na.rm=T), sd(v2, na.rm=T))
+  
+  pval <- wilcox.test(v1, v2)$p.value
+  smd <- calc_smd_continuous(v1, v2)
+  
+  data.frame(
+    Variable = label, Level = "", 
+    Excl = res1, Incl = res2, 
+    P = fmt_p(pval), Test = "Wilcoxon", SMD = fmt_smd(smd),
+    stringsAsFactors = F
+  )
+}
+
+get_row_med_iqr <- function(var, label, df1, df2) {
+  v1 <- as.numeric(df1[[var]])
+  v2 <- as.numeric(df2[[var]])
+  
+  fmt_iqr <- function(x) {
+    q <- quantile(x, probs = c(0.25, 0.5, 0.75), na.rm = TRUE)
+    sprintf("%.2f [%.2f, %.2f]", q[2], q[1], q[3])
+  }
+  
+  pval <- wilcox.test(v1, v2)$p.value
+  smd <- calc_smd_continuous(v1, v2)
+  
+  data.frame(
+    Variable = label, Level = "", 
+    Excl = fmt_iqr(v1), Incl = fmt_iqr(v2), 
+    P = fmt_p(pval), Test = "nonnorm", SMD = fmt_smd(smd),
+    stringsAsFactors = F
+  )
+}
+
+get_row_cat <- function(var, label, df1, df2, custom_levels=NULL) {
+  clean_f <- function(v) {
+    x <- as.character(v)
+    x[is.na(x) | x == ""] <- "Unreported"
+    x[x == "Unknown"] <- "Unreported"
+    return(x)
+  }
+  
+  v1 <- clean_f(df1[[var]])
+  v2 <- clean_f(df2[[var]])
+  
+  levs <- sort(unique(c(v1, v2)))
+  
+  if(!is.null(custom_levels)) {
+    levs <- custom_levels[custom_levels %in% levs]
+    others <- setdiff(unique(c(v1, v2)), levs)
+    levs <- c(levs, others)
+  }
+  
+  t_mat <- rbind(table(factor(v1, levels=levs)), table(factor(v2, levels=levs)))
+  pval <- tryCatch(chisq.test(t_mat)$p.value, warning=function(w) suppressWarnings(chisq.test(t_mat)$p.value))
+  
+  if(length(levs) == 2) {
+    smd <- calc_smd_continuous(as.numeric(v1==levs[1]), as.numeric(v2==levs[1]))
+  } else {
+    smd <- calc_smd_multilevel(v1, v2)
+  }
+  
+  out_df <- data.frame()
+  
+  first_row <- data.frame(
+    Variable = label, Level = "", Excl = "", Incl = "", 
+    P = fmt_p(pval), Test = "", SMD = fmt_smd(smd), stringsAsFactors = F
+  )
+  out_df <- rbind(out_df, first_row)
+  
+  n1_tot <- length(v1)
+  n2_tot <- length(v2)
+  
+  for(l in levs) {
+    c1 <- sum(v1 == l)
+    c2 <- sum(v2 == l)
+    p1 <- c1/n1_tot * 100
+    p2 <- c2/n2_tot * 100
+    
+    sub_row <- data.frame(
+      Variable = "", Level = l,
+      Excl = sprintf("%d (%.1f)", c1, p1),
+      Incl = sprintf("%d (%.1f)", c2, p2),
+      P = "", Test = "", SMD = "", stringsAsFactors = F
+    )
+    out_df <- rbind(out_df, sub_row)
+  }
+  
+  return(out_df)
+}
+
+res_list <- list()
+
+res_list[[1]] <- get_row_mean_sd("isolation", "Isolation", missing_rows, cmp_incident)
+res_list[[2]] <- get_row_mean_sd("loneliness", "Loneliness", missing_rows, cmp_incident)
+res_list[[3]] <- get_row_mean_sd("indicator", "Indicator", missing_rows, cmp_incident)
+res_list[[4]] <- get_row_med_iqr("age_event", "Age event", missing_rows, cmp_incident)
+res_list[[5]] <- get_row_med_iqr("age_entry", "Age entry", missing_rows, cmp_incident)
+res_list[[6]] <- get_row_cat("Sex", "Sex", missing_rows, cmp_incident)
+res_list[[7]] <- get_row_cat("Race", "Race", missing_rows, cmp_incident)
+res_list[[8]] <- get_row_med_iqr("BMI", "BMI", missing_rows, cmp_incident)
+res_list[[9]] <- get_row_cat("UK_Center", "UK Center", missing_rows, cmp_incident, 
+                             custom_levels = c("English", "Scotland", "Wales"))
+res_list[[10]] <- get_row_cat("Education", "Education", missing_rows, cmp_incident)
+res_list[[11]] <- get_row_cat("Employment", "Employment", missing_rows, cmp_incident,
+                              custom_levels = c("Employed", "Others", "Retired"))
+res_list[[12]] <- get_row_cat("Smoking_status", "Smoking status", missing_rows, cmp_incident,
+                              custom_levels = c("Current", "Never", "Previous"))
+res_list[[13]] <- get_row_cat("Alcohol_status", "Alcohol status", missing_rows, cmp_incident,
+                              custom_levels = c("Current", "Never", "Previous"))
+res_list[[14]] <- get_row_cat("depress_mood", "Depress mood", missing_rows, cmp_incident,
+                              custom_levels = c("High", "Low", "Unreported"))
+res_list[[15]] <- get_row_med_iqr("Townsend_deprivation_index", "Townsend Deprivation index", missing_rows, cmp_incident)
+res_list[[16]] <- get_row_cat("Family_cancer", "Family cancer", missing_rows, cmp_incident, custom_levels=c("1", "0"))
+res_list[[17]] <- get_row_med_iqr("Overall_health_rating", "Overall Health rating", missing_rows, cmp_incident)
+res_list[[18]] <- get_row_med_iqr("Hand_grip", "Hand grip", missing_rows, cmp_incident)
+res_list[[19]] <- get_row_med_iqr("day_exposure", "Day exposure", missing_rows, cmp_incident)
+res_list[[20]] <- get_row_med_iqr("diet_score", "Diet score", missing_rows, cmp_incident)
+res_list[[21]] <- get_row_med_iqr("sleep_score", "Sleep score", missing_rows, cmp_incident)
+res_list[[22]] <- get_row_med_iqr("MAP", "MAP", missing_rows, cmp_incident)
+
+res_list[[23]] <- get_row_cat("Income", "Income", missing_rows, cmp_incident, 
+                              custom_levels = c("High", "Low", "Medium", "Unreported"))
+
+final_table <- do.call(rbind, res_list)
+
+n_excl <- nrow(missing_rows)
+n_incl <- nrow(cmp_incident)
+colnames(final_table)[3:4] <- c(paste0("Excluded (n=", n_excl, ")"), paste0("Included (n=", n_incl, ")"))
+
+print(final_table)
+write.csv(final_table, "Table9.csv", row.names = FALSE)
