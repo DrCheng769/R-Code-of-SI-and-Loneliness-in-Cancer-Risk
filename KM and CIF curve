@@ -1,0 +1,185 @@
+library(survival)
+library(cmprsk)
+library(ggplot2)
+library(scales)
+library(patchwork)
+library(dplyr)
+
+data <- cmp_incident_sense
+time_var <- data$delta_days
+status_var <- data$indicator
+
+data$isolation_num <- as.numeric(data$isolation) - 1
+data$loneliness_num <- as.numeric(data$loneliness) - 1
+
+create_competing_risk_plot <- function(group_var, group_name, group_labels, subtitle = "") {
+  cif_fit <- cuminc(ftime = time_var, fstatus = status_var, group = group_var)
+  
+  km_fit <- survfit(Surv(time_var, ifelse(status_var == 2, 0, status_var)) ~ group_var)
+  
+  cif_pval <- round(cif_fit$Tests[1, "pv"], 3)
+  cif_pval_text <- ifelse(cif_pval < 0.001, "CIF P < 0.001", paste("CIF P =", cif_pval))
+  
+  km_diff <- survdiff(Surv(time_var, ifelse(status_var == 2, 0, status_var)) ~ group_var)
+  km_pval <- round(1 - pchisq(km_diff$chisq, length(km_diff$n) - 1), 3)
+  km_pval_text <- ifelse(km_pval < 0.001, "KM P < 0.001", paste("KM P =", km_pval))
+  
+  prepare_plot_data <- function() {
+    cif_non <- cif_fit[[paste(0, 1)]]
+    cif_non_df <- data.frame(
+      time = cif_non$time, est = cif_non$est, se = sqrt(cif_non$var),
+      Group = group_labels[1], Method = "CIF"
+    )
+    
+    cif_exp <- cif_fit[[paste(1, 1)]]
+    cif_exp_df <- data.frame(
+      time = cif_exp$time, est = cif_exp$est, se = sqrt(cif_exp$var),
+      Group = group_labels[2], Method = "CIF"
+    )
+    
+    km_non <- data.frame(
+      time = km_fit[1]$time, est = 1 - km_fit[1]$surv, se = km_fit[1]$std.err,
+      Group = group_labels[1], Method = "KM"
+    )
+    
+    km_exp <- data.frame(
+      time = km_fit[2]$time, est = 1 - km_fit[2]$surv, se = km_fit[2]$std.err,
+      Group = group_labels[2], Method = "KM"
+    )
+    
+    thin_data <- function(df) {
+      if (nrow(df) > 300) {
+        idx <- seq(1, nrow(df), length.out = 300)
+        df[idx, ]
+      } else {
+        df
+      }
+    }
+    
+    bind_rows(
+      thin_data(cif_non_df), thin_data(cif_exp_df),
+      thin_data(km_non), thin_data(km_exp)
+    ) %>%
+      mutate(
+        lower = pmax(0, est - 1.96 * se),
+        upper = pmin(1, est + 1.96 * se)
+      )
+  }
+  
+  plot_data <- prepare_plot_data()
+  
+  nature_theme <- function() {
+    theme_minimal(base_size = 11) +
+      theme(
+        plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size = 10, hjust = 0.5, color = "grey40"),
+        axis.title = element_text(size = 11),
+        axis.text = element_text(size = 10, color = "black"),
+        legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 10),
+        panel.grid.major = element_line(color = "grey90", linewidth = 0.2),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black", linewidth = 0.5),
+        plot.margin = margin(10, 10, 10, 10)
+      )
+  }
+  
+  y_pos <- max(plot_data$upper, na.rm = TRUE) * 0.85
+  x_pos <- max(plot_data$time/365, na.rm = TRUE) * 0.5
+  
+  ggplot(plot_data, aes(x = time/365, y = est, color = Group, linetype = Method, fill = Group)) +
+    geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, color = NA) +
+    geom_line(linewidth = 0.8) +
+    scale_color_manual(values = c("#1F77B4", "#FF7F0E")) +
+    scale_fill_manual(values = c("#1F77B4", "#FF7F0E"), guide = "none") +
+    scale_linetype_manual(values = c("CIF" = "solid", "KM" = "dashed")) +
+    labs(
+      x = "Time since enrollment (Years)",
+      y = "Cumulative incidence of cancer",
+      title = group_name,
+      subtitle = ifelse(nchar(subtitle) > 0, subtitle, 
+                        paste("N =", format(nrow(data), big.mark = ","), "| With 95% Confidence Intervals")),
+      caption = "Note: KM method overestimates cancer incidence compared to CIF method"
+    ) +
+    nature_theme() +
+    scale_y_continuous(labels = percent_format(accuracy = 0.1), 
+                       limits = c(0, max(plot_data$upper, na.rm = TRUE)*1.05)) +
+    scale_x_continuous(breaks = seq(0, 15, by = 2)) +
+    guides(
+      color = guide_legend(override.aes = list(linetype = "solid")),
+      linetype = guide_legend(override.aes = list(color = "black"))
+    ) +
+    geom_vline(xintercept = c(3, 5, 10), linetype = "dotted", color = "grey50", linewidth = 0.5) +
+    annotate("text", x = c(3.1, 5.1, 10.1), y = max(plot_data$upper, na.rm = TRUE)*0.95, 
+             label = c("3yr", "5yr", "10yr"), hjust = 0, size = 3, color = "grey40") +
+    annotate("text", x = x_pos, y = y_pos, 
+             label = paste(cif_pval_text, "\n", km_pval_text),
+             hjust = 0.5, size = 4, color = "black")
+}
+
+plot_isolation <- create_competing_risk_plot(
+  group_var = data$isolation_num,
+  group_name = "Social Isolation (Overall)",
+  group_labels = c("Non-isolated", "Isolated")
+) + theme(legend.position = "bottom")
+
+plot_loneliness <- create_competing_risk_plot(
+  group_var = data$loneliness_num,
+  group_name = "Loneliness (Overall)",
+  group_labels = c("Non-lonely", "Lonely")
+) + theme(legend.position = "bottom")
+
+data_female <- data %>% filter(Sex == "Female")
+time_var <- data_female$delta_days
+status_var <- data_female$indicator
+
+plot_isolation_female <- create_competing_risk_plot(
+  group_var = data_female$isolation_num,
+  group_name = "Social Isolation (Female)",
+  group_labels = c("Non-isolated", "Isolated"),
+  subtitle = paste("Female, N =", format(nrow(data_female), big.mark = ","))
+) + theme(legend.position = "bottom")
+
+plot_loneliness_female <- create_competing_risk_plot(
+  group_var = data_female$loneliness_num,
+  group_name = "Loneliness (Female)",
+  group_labels = c("Non-lonely", "Lonely"),
+  subtitle = paste("Female, N =", format(nrow(data_female), big.mark = ","))
+) + theme(legend.position = "bottom")
+
+data_male <- data %>% filter(Sex == "Male")
+time_var <- data_male$delta_days
+status_var <- data_male$indicator
+
+plot_isolation_male <- create_competing_risk_plot(
+  group_var = data_male$isolation_num,
+  group_name = "Social Isolation (Male)",
+  group_labels = c("Non-isolated", "Isolated"),
+  subtitle = paste("Male, N =", format(nrow(data_male), big.mark = ","))
+) + theme(legend.position = "bottom")
+
+plot_loneliness_male <- create_competing_risk_plot(
+  group_var = data_male$loneliness_num,
+  group_name = "Loneliness (Male)",
+  group_labels = c("Non-lonely", "Lonely"),
+  subtitle = paste("Male, N =", format(nrow(data_male), big.mark = ","))
+) + theme(legend.position = "bottom")
+
+combined_plot <- (plot_isolation + plot_loneliness + plot_isolation_female + 
+                    plot_loneliness_female + plot_isolation_male + plot_loneliness_male) +
+  plot_layout(ncol = 2, nrow = 3) +
+  plot_annotation(tag_levels = 'A') &
+  theme(plot.tag = element_text(size = 14, face = "bold"))
+
+print(combined_plot)
+
+ggsave("combined_competing_risks_plot.tiff", combined_plot, 
+       width = 36, height = 45, units = "cm", dpi = 600, 
+       compression = "lzw", device = "tiff")
+
+cairo_pdf("combined_competing_risks_plot.pdf", 
+          width = 36/2.54, height = 45/2.54, family = "Helvetica")
+print(combined_plot)
+dev.off()
