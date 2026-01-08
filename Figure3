@@ -1,0 +1,275 @@
+##Code of Figure3
+##cox model
+data <- readRDS("")
+
+library(survival)
+library(dplyr)
+
+incident <- data
+
+calculate_cox <- function(data, filter_expr, group_var, covariates) {
+  data_filtered <- data %>% filter(eval(parse(text = filter_expr))) %>% na.omit()
+  
+  formula <- as.formula(paste("Surv(delta_years, indicator) ~", paste(c(group_var, covariates), collapse = " + ")))
+  
+  cox_model <- tryCatch(
+    coxph(formula, data = data_filtered),
+    error = function(e) NULL
+  )
+  
+  if (is.null(cox_model)) {
+    return(list(HR = NA, CI = "NA", CI_lower = NA, CI_upper = NA, p_value = "NA"))
+  }
+  
+  # 提取风险比
+  HR <- exp(cox_model$coef[group_var])
+  SE_log_HR <- sqrt(cox_model$var[group_var, group_var])
+  
+  CI_lower <- exp(cox_model$coef[group_var] - 1.96 * SE_log_HR)
+  CI_upper <- exp(cox_model$coef[group_var] + 1.96 * SE_log_HR)
+  
+  p_value <- summary(cox_model)$coefficients[group_var, "Pr(>|z|)"]
+  p_value <- ifelse(p_value <= 0.001, "<0.001", sprintf("%.3f", p_value))
+  
+  list(HR = HR, CI = paste0("[", round(CI_lower, 2), "-", round(CI_upper, 2), "]"),
+       CI_lower = CI_lower, CI_upper = CI_upper, p_value = p_value)
+}
+
+calculate_hr_perm <- function(data, population = "all", exposure = "isolation") {
+  if (population == "male") {
+    filter_expr <- "Sex == 'Male'"
+  } else if (population == "female") {
+    filter_expr <- "Sex == 'Female'"
+  } else {
+    filter_expr <- "TRUE"
+  }
+  
+  baseline_cov <- if (population == "all") c("Age", "Sex", "Race") else c("Age", "Race")
+  socio_cov <- c("Income", "Education", "Employment", "Townsend_deprivation_index")
+  behavioral_cov <- c("Smoking_status", "Alcohol_status", "diet_score", "day_exposure", "sleep_score")
+  physical_cov <- c("BMI", "MAP", "Hand_grip")
+  mental_cov <- c("depress_mood")
+  overall_cov <- c("Overall_health_rating")
+  family_cov <- c("Family_cancer")
+  geographic_cov <- c("UK_Center")
+  
+  full_cov <- unique(c(baseline_cov, socio_cov, behavioral_cov, physical_cov, mental_cov, overall_cov, family_cov, geographic_cov))
+  
+  res_baseline <- calculate_cox(data, filter_expr, exposure, baseline_cov)
+  hr_baseline <- res_baseline$HR
+  ci_baseline_lower <- res_baseline$CI_lower
+  ci_baseline_upper <- res_baseline$CI_upper
+  
+  cov_socio <- c(baseline_cov, socio_cov)
+  res_socio <- calculate_cox(data, filter_expr, exposure, cov_socio)
+  hr_socio <- res_socio$HR
+  ci_socio_lower <- res_socio$CI_lower
+  ci_socio_upper <- res_socio$CI_upper
+  perm_socio <- (hr_baseline - hr_socio) / (hr_baseline - 1) * 100
+  
+  cov_behavioral <- c(baseline_cov, behavioral_cov)
+  res_behavioral <- calculate_cox(data, filter_expr, exposure, cov_behavioral)
+  hr_behavioral <- res_behavioral$HR
+  ci_behavioral_lower <- res_behavioral$CI_lower
+  ci_behavioral_upper <- res_behavioral$CI_upper
+  perm_behavioral <- (hr_baseline - hr_behavioral) / (hr_baseline - 1) * 100
+  
+  cov_physical <- c(baseline_cov, physical_cov)
+  res_physical <- calculate_cox(data, filter_expr, exposure, cov_physical)
+  hr_physical <- res_physical$HR
+  ci_physical_lower <- res_physical$CI_lower
+  ci_physical_upper <- res_physical$CI_upper
+  perm_physical <- (hr_baseline - hr_physical) / (hr_baseline - 1) * 100
+  
+  cov_mental <- c(baseline_cov, mental_cov)
+  res_mental <- calculate_cox(data, filter_expr, exposure, cov_mental)
+  hr_mental <- res_mental$HR
+  ci_mental_lower <- res_mental$CI_lower
+  ci_mental_upper <- res_mental$CI_upper
+  perm_mental <- (hr_baseline - hr_mental) / (hr_baseline - 1) * 100
+  
+  cov_overall <- c(baseline_cov, overall_cov)
+  res_overall <- calculate_cox(data, filter_expr, exposure, cov_overall)
+  hr_overall <- res_overall$HR
+  ci_overall_lower <- res_overall$CI_lower
+  ci_overall_upper <- res_overall$CI_upper
+  perm_overall <- (hr_baseline - hr_overall) / (hr_baseline - 1) * 100
+  
+  cov_family <- c(baseline_cov, family_cov)
+  res_family <- calculate_cox(data, filter_expr, exposure, cov_family)
+  hr_family <- res_family$HR
+  ci_family_lower <- res_family$CI_lower
+  ci_family_upper <- res_family$CI_upper
+  perm_family <- (hr_baseline - hr_family) / (hr_baseline - 1) * 100
+  
+  cov_geo <- c(baseline_cov, geographic_cov)
+  res_geo <- calculate_cox(data, filter_expr, exposure, cov_geo)
+  hr_geo <- res_geo$HR
+  ci_geo_lower <- res_geo$CI_lower
+  ci_geo_upper <- res_geo$CI_upper
+  perm_geo <- (hr_baseline - hr_geo) / (hr_baseline - 1) * 100
+  
+  res_full <- calculate_cox(data, filter_expr, exposure, full_cov)
+  hr_full <- res_full$HR
+  ci_full_lower <- res_full$CI_lower
+  ci_full_upper <- res_full$CI_upper
+  perm_full <- (hr_baseline - hr_full) / (hr_baseline - 1) * 100
+  
+  results <- data.frame(
+    Adjustment = c("Minimally", "Socioeconomic", "Behavioral", "Physical Health", "Mental Health", "Overall Health", "Family History", "Geographical Factors", "ALL"),
+    HR = c(hr_baseline, hr_socio, hr_behavioral, hr_physical, hr_mental, hr_overall, hr_family, hr_geo, hr_full),
+    Lower = c(ci_baseline_lower, ci_socio_lower, ci_behavioral_lower, ci_physical_lower, ci_mental_lower, ci_overall_lower, ci_family_lower, ci_geo_lower, ci_full_lower),
+    Upper = c(ci_baseline_upper, ci_socio_upper, ci_behavioral_upper, ci_physical_upper, ci_mental_upper, ci_overall_upper, ci_family_upper, ci_geo_upper, ci_full_upper),
+    PERM = c("", perm_socio, perm_behavioral, perm_physical, perm_mental, perm_overall, perm_family, perm_geo, perm_full)
+  )
+  
+  return(results)
+}
+
+results_all_isolation <- calculate_hr_perm(data = incident, population = "all", exposure = "isolation")
+results_male_isolation <- calculate_hr_perm(data = incident, population = "male", exposure = "isolation")
+results_female_isolation <- calculate_hr_perm(data = incident, population = "female", exposure = "isolation")
+
+results_all_loneliness <- calculate_hr_perm(data = incident, population = "all", exposure = "loneliness")
+results_male_loneliness <- calculate_hr_perm(data = incident, population = "male", exposure = "loneliness")
+results_female_loneliness <- calculate_hr_perm(data = incident, population = "female", exposure = "loneliness")
+
+saveRDS(results_all_isolation,"results_all_isolation.rds")
+saveRDS(results_all_loneliness,"results_all_loneliness.rds")
+saveRDS(results_female_isolation,"results_female_isolation.rds")
+saveRDS(results_female_loneliness,"results_female_loneliness.rds")
+saveRDS(results_male_isolation,"results_male_isolation.rds")
+saveRDS(results_male_loneliness,"results_male_loneliness.rds")
+##cmp model
+data <- readRDS("")
+
+library(fastcmprsk)
+library(dplyr)
+
+incident <- data
+
+calculate_fg <- function(data, filter_expr, group_var, covariates) {
+  data_filtered <- data %>% filter(eval(parse(text = filter_expr))) %>% na.omit()
+  formula <- as.formula(paste("Crisk(delta_years, indicator) ~", paste(c(group_var, covariates), collapse = " + ")))
+  fg_model <- tryCatch(
+    fastCrr(formula, data = data_filtered, variance = TRUE),
+    error = function(e) NULL
+  )
+  if (is.null(fg_model)) {
+    return(list(sHR = NA, CI = "NA", CI_lower = NA, CI_upper = NA, p_value = "NA"))
+  }
+  sHR <- exp(fg_model$coef[1])
+  SE_log_sHR <- sqrt(fg_model$var[1, 1])
+  CI_lower <- exp(fg_model$coef[1] - 1.96 * SE_log_sHR)
+  CI_upper <- exp(fg_model$coef[1] + 1.96 * SE_log_sHR)
+  p_value <- 2 * (1 - pnorm(abs(fg_model$coef[1] / SE_log_sHR)))
+  p_value <- ifelse(p_value <= 0.001, "<0.001", sprintf("%.3f", p_value))
+  list(sHR = sHR, CI = paste0("[", round(CI_lower, 2), "-", round(CI_upper, 2), "]"),
+       CI_lower = CI_lower, CI_upper = CI_upper, p_value = p_value)
+}
+
+calculate_shr_perm <- function(data, population = "all", exposure = "isolation") {
+  if (population == "male") {
+    filter_expr <- "Sex == 'Male'"
+  } else if (population == "female") {
+    filter_expr <- "Sex == 'Female'"
+  } else {
+    filter_expr <- "TRUE"
+  }
+  
+  baseline_cov <- if (population == "all") c("Age", "Sex", "Race") else c("Age", "Race")
+  socio_cov <- c("Income", "Education", "Employment", "Townsend_deprivation_index")
+  behavioral_cov <- c("Smoking_status", "Alcohol_status", "diet_score", "day_exposure", "sleep_score")
+  physical_cov <- c("BMI", "MAP", "Hand_grip")
+  mental_cov <- c("depress_mood")
+  overall_cov <- c("Overall_health_rating")
+  family_cov <- c("Family_cancer")
+  geographic_cov <- c("UK_Center")
+  
+  full_cov <- unique(c(baseline_cov, socio_cov, behavioral_cov, physical_cov, mental_cov, overall_cov, family_cov, geographic_cov))
+  
+  res_baseline <- calculate_fg(data, filter_expr, exposure, baseline_cov)
+  shr_baseline <- res_baseline$sHR
+  ci_baseline_lower <- res_baseline$CI_lower
+  ci_baseline_upper <- res_baseline$CI_upper
+  
+  cov_socio <- c(baseline_cov, socio_cov)
+  res_socio <- calculate_fg(data, filter_expr, exposure, cov_socio)
+  shr_socio <- res_socio$sHR
+  ci_socio_lower <- res_socio$CI_lower
+  ci_socio_upper <- res_socio$CI_upper
+  perm_socio <- (shr_baseline - shr_socio) / (shr_baseline - 1) * 100
+  
+  cov_behavioral <- c(baseline_cov, behavioral_cov)
+  res_behavioral <- calculate_fg(data, filter_expr, exposure, cov_behavioral)
+  shr_behavioral <- res_behavioral$sHR
+  ci_behavioral_lower <- res_behavioral$CI_lower
+  ci_behavioral_upper <- res_behavioral$CI_upper
+  perm_behavioral <- (shr_baseline - shr_behavioral) / (shr_baseline - 1) * 100
+  
+  cov_physical <- c(baseline_cov, physical_cov)
+  res_physical <- calculate_fg(data, filter_expr, exposure, cov_physical)
+  shr_physical <- res_physical$sHR
+  ci_physical_lower <- res_physical$CI_lower
+  ci_physical_upper <- res_physical$CI_upper
+  perm_physical <- (shr_baseline - shr_physical) / (shr_baseline - 1) * 100
+  
+  cov_mental <- c(baseline_cov, mental_cov)
+  res_mental <- calculate_fg(data, filter_expr, exposure, cov_mental)
+  shr_mental <- res_mental$sHR
+  ci_mental_lower <- res_mental$CI_lower
+  ci_mental_upper <- res_mental$CI_upper
+  perm_mental <- (shr_baseline - shr_mental) / (shr_baseline - 1) * 100
+  
+  cov_overall <- c(baseline_cov, overall_cov)
+  res_overall <- calculate_fg(data, filter_expr, exposure, cov_overall)
+  shr_overall <- res_overall$sHR
+  ci_overall_lower <- res_overall$CI_lower
+  ci_overall_upper <- res_overall$CI_upper
+  perm_overall <- (shr_baseline - shr_overall) / (shr_baseline - 1) * 100
+  
+  cov_family <- c(baseline_cov, family_cov)
+  res_family <- calculate_fg(data, filter_expr, exposure, cov_family)
+  shr_family <- res_family$sHR
+  ci_family_lower <- res_family$CI_lower
+  ci_family_upper <- res_family$CI_upper
+  perm_family <- (shr_baseline - shr_family) / (shr_baseline - 1) * 100
+  
+  cov_geo <- c(baseline_cov, geographic_cov)
+  res_geo <- calculate_fg(data, filter_expr, exposure, cov_geo)
+  shr_geo <- res_geo$sHR
+  ci_geo_lower <- res_geo$CI_lower
+  ci_geo_upper <- res_geo$CI_upper
+  perm_geo <- (shr_baseline - shr_geo) / (shr_baseline - 1) * 100
+  
+  res_full <- calculate_fg(data, filter_expr, exposure, full_cov)
+  shr_full <- res_full$sHR
+  ci_full_lower <- res_full$CI_lower
+  ci_full_upper <- res_full$CI_upper
+  perm_full <- (shr_baseline - shr_full) / (shr_baseline - 1) * 100
+  
+  results <- data.frame(
+    Adjustment = c("Minimally", "Socioeconomic", "Behavioral", "Physical Health", "Mental Health", "Overall Health", "Family History", "Geographical Factors", "ALL"),
+    sHR = c(shr_baseline, shr_socio, shr_behavioral, shr_physical, shr_mental, shr_overall, shr_family, shr_geo, shr_full),
+    Lower = c(ci_baseline_lower, ci_socio_lower, ci_behavioral_lower, ci_physical_lower, ci_mental_lower, ci_overall_lower, ci_family_lower, ci_geo_lower, ci_full_lower),
+    Upper = c(ci_baseline_upper, ci_socio_upper, ci_behavioral_upper, ci_physical_upper, ci_mental_upper, ci_overall_upper, ci_family_upper, ci_geo_upper, ci_full_upper),
+    PERM = c("", perm_socio, perm_behavioral, perm_physical, perm_mental, perm_overall, perm_family, perm_geo, perm_full)
+  )
+  
+  return(results)
+}
+
+results_all_isolation <- calculate_shr_perm(data = incident, population = "all", exposure = "isolation")
+results_male_isolation <- calculate_shr_perm(data = incident, population = "male", exposure = "isolation")
+results_female_isolation <- calculate_shr_perm(data = incident, population = "female", exposure = "isolation")
+
+results_all_loneliness <- calculate_shr_perm(data = incident, population = "all", exposure = "loneliness")
+results_male_loneliness <- calculate_shr_perm(data = incident, population = "male", exposure = "loneliness")
+results_female_loneliness <- calculate_shr_perm(data = incident, population = "female", exposure = "loneliness")
+
+saveRDS(results_all_isolation,"results_all_isolation.rds")
+saveRDS(results_all_loneliness,"results_all_loneliness.rds")
+saveRDS(results_female_isolation,"results_female_isolation.rds")
+saveRDS(results_female_loneliness,"results_female_loneliness.rds")
+saveRDS(results_male_isolation,"results_male_isolation.rds")
+saveRDS(results_male_loneliness,"results_male_loneliness.rds")
