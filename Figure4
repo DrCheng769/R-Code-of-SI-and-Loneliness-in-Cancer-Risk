@@ -1,0 +1,789 @@
+##cox model
+library(dplyr)
+library(survival)
+
+aaa <- readRDS("your_data.rds")
+
+aaa <- aaa %>%
+  mutate(
+    age_group = as.factor(case_when(
+      Age >= 0 & Age < 50 ~ "0-49",
+      Age >= 50 & Age < 60 ~ "50-59",
+      Age >= 60 ~ "60 and older"
+    )),
+    bmi_group = as.factor(case_when(
+      BMI >= 25 ~ "Fat",
+      BMI <  25 ~ "Not_fat"
+    ))
+  )
+
+covariates_model3 <- c("Age","Sex","Race","MAP","BMI","UK_Center",
+                       "Employment","Education","Smoking_status","Alcohol_status",
+                       "Hand_grip","day_exposure","diet_score", "depress_mood",
+                       "sleep_score","Townsend_deprivation_index",
+                       "Family_cancer",
+                       "Overall_health_rating","Income")
+
+isolation_interaction <- TableSubgroupMultiCox(
+  formula = Surv(age_entry, age_event, indicator) ~ isolation,
+  var_subgroups = c("age_group", "Sex", "Income","Education", "Employment","Smoking_status", "Alcohol_status"),
+  var_cov = covariates_model3,
+  data = aaa,
+  time_eventrate = 6166,
+  decimal.hr = 5,
+  decimal.percent = 2,
+  decimal.pvalue = 4,
+  line = FALSE
+)
+
+loneliness_interaction <- TableSubgroupMultiCox(
+  formula = Surv(age_entry, age_event, indicator) ~ loneliness,
+  var_subgroups = c("age_group", "Sex", "Income","Education", "Employment","Smoking_status", "Alcohol_status"),
+  var_cov = covariates_model3,
+  data = aaa,
+  time_eventrate = 6166,
+  decimal.hr = 5,
+  decimal.percent = 2,
+  decimal.pvalue = 4,
+  line = FALSE
+)
+
+dummy_variables <- model.matrix(~ age_group + Sex + Income + Education + Employment + Smoking_status + Alcohol_status, data = aaa)
+aaa_dummy <- as.data.frame(dummy_variables)
+aaa_dummy <- aaa_dummy[, -1]
+aaa_combined <- cbind(aaa, aaa_dummy)
+
+variables_to_interact <- colnames(aaa_dummy)
+
+addictive_isolation <- data.frame(
+  Variable = character(),
+  RERI = numeric(),
+  RERI_Lower = numeric(),
+  RERI_Upper = numeric(),
+  AP = numeric(),
+  AP_Lower = numeric(),
+  AP_Upper = numeric(),
+  SI = numeric(),
+  SI_Lower = numeric(),
+  SI_Upper = numeric(),
+  stringsAsFactors = FALSE
+)
+
+calculate_interaction_metrics <- function(cox_model, var, isolation_name = "isolation") {
+  beta_isolation <- summary(cox_model)$coefficients[paste0(isolation_name, "1"), "coef"]
+  ci_isolation <- confint(cox_model, parm = paste0(isolation_name, "1"))
+  
+  beta_var <- summary(cox_model)$coefficients[var, "coef"]
+  ci_var <- confint(cox_model, parm = var)
+  
+  interaction_term <- paste0(isolation_name, "1:", var)
+  beta_interaction <- summary(cox_model)$coefficients[interaction_term, "coef"]
+  ci_interaction <- confint(cox_model, parm = interaction_term)
+  
+  RERI <- exp(beta_interaction) - 1
+  ci_RERI <- exp(c(ci_interaction[1], ci_interaction[2])) - 1
+  
+  AP <- (exp(beta_isolation + beta_var + beta_interaction) - exp(beta_isolation) - exp(beta_var) + 1) / exp(beta_isolation + beta_var + beta_interaction)
+  ci_AP <- c(
+    (exp(beta_isolation + beta_var + ci_interaction[1]) - exp(beta_isolation) - exp(beta_var) + 1) / exp(beta_isolation + beta_var + ci_interaction[1]),
+    (exp(beta_isolation + beta_var + ci_interaction[2]) - exp(beta_isolation) - exp(beta_var) + 1) / exp(beta_isolation + beta_var + ci_interaction[2])
+  )
+  
+  SI <- exp(beta_interaction) / (exp(beta_isolation) * exp(beta_var))
+  ci_SI <- c(
+    exp(ci_interaction[1]) / (exp(beta_isolation) * exp(beta_var)),
+    exp(ci_interaction[2]) / (exp(beta_isolation) * exp(beta_var))
+  )
+  
+  return(list(RERI = RERI, ci_RERI = ci_RERI, AP = AP, ci_AP = ci_AP, SI = SI, ci_SI = ci_SI))
+}
+
+for (var in variables_to_interact) {
+  if (grepl("[^a-zA-Z0-9_]", var)) {
+    var <- paste0("`", var, "`")
+  }
+  
+  formula_str <- paste("Surv(time = age_entry, time2 = age_event, indicator) ~ isolation *", var, "+", paste(covariates_model3, collapse = " + "))
+  formula <- as.formula(formula_str)
+  
+  cox_model <- coxph(formula, data = aaa_combined)
+  
+  tryCatch({
+    interaction_metrics <- calculate_interaction_metrics(cox_model, var)
+    
+    addictive_isolation <- rbind(addictive_isolation, data.frame(
+      Variable = var,
+      RERI = interaction_metrics$RERI,
+      RERI_Lower = interaction_metrics$ci_RERI[1],
+      RERI_Upper = interaction_metrics$ci_RERI[2],
+      AP = interaction_metrics$AP,
+      AP_Lower = interaction_metrics$ci_AP[1],
+      AP_Upper = interaction_metrics$ci_AP[2],
+      SI = interaction_metrics$SI,
+      SI_Lower = interaction_metrics$ci_SI[1],
+      SI_Upper = interaction_metrics$ci_SI[2],
+      stringsAsFactors = FALSE
+    ))
+    
+  }, error = function(e) {})
+}
+
+dummy_variables <- model.matrix(~ age_group + Sex + Income + Education + Employment + Smoking_status + Alcohol_status, data = aaa)
+aaa_dummy <- as.data.frame(dummy_variables)
+aaa_dummy <- aaa_dummy[, -1]
+aaa_combined <- cbind(aaa, aaa_dummy)
+
+variables_to_interact <- colnames(aaa_dummy)
+
+addictive_loneliness <- data.frame(
+  Variable = character(),
+  RERI = numeric(),
+  RERI_Lower = numeric(),
+  RERI_Upper = numeric(),
+  AP = numeric(),
+  AP_Lower = numeric(),
+  AP_Upper = numeric(),
+  SI = numeric(),
+  SI_Lower = numeric(),
+  SI_Upper = numeric(),
+  stringsAsFactors = FALSE
+)
+
+calculate_interaction_metrics <- function(cox_model, var, loneliness_name = "loneliness") {
+  beta_loneliness <- summary(cox_model)$coefficients[paste0(loneliness_name, "1"), "coef"]
+  ci_loneliness <- confint(cox_model, parm = paste0(loneliness_name, "1"))
+  
+  beta_var <- summary(cox_model)$coefficients[var, "coef"]
+  ci_var <- confint(cox_model, parm = var)
+  
+  interaction_term <- paste0(loneliness_name, "1:", var)
+  beta_interaction <- summary(cox_model)$coefficients[interaction_term, "coef"]
+  ci_interaction <- confint(cox_model, parm = interaction_term)
+  
+  RERI <- exp(beta_interaction) - 1
+  ci_RERI <- exp(c(ci_interaction[1], ci_interaction[2])) - 1
+  
+  AP <- (exp(beta_loneliness + beta_var + beta_interaction) - exp(beta_loneliness) - exp(beta_var) + 1) / exp(beta_loneliness + beta_var + beta_interaction)
+  ci_AP <- c(
+    (exp(beta_loneliness + beta_var + ci_interaction[1]) - exp(beta_loneliness) - exp(beta_var) + 1) / exp(beta_loneliness + beta_var + ci_interaction[1]),
+    (exp(beta_loneliness + beta_var + ci_interaction[2]) - exp(beta_loneliness) - exp(beta_var) + 1) / exp(beta_loneliness + beta_var + ci_interaction[2])
+  )
+  
+  SI <- exp(beta_interaction) / (exp(beta_loneliness) * exp(beta_var))
+  ci_SI <- c(
+    exp(ci_interaction[1]) / (exp(beta_loneliness) * exp(beta_var)),
+    exp(ci_interaction[2]) / (exp(beta_loneliness) * exp(beta_var))
+  )
+  return(list(RERI = RERI, ci_RERI = ci_RERI, AP = AP, ci_AP = ci_AP, SI = SI, ci_SI = ci_SI))
+}
+
+for (var in variables_to_interact) {
+  if (grepl("[^a-zA-Z0-9_]", var)) {
+    var <- paste0("`", var, "`")
+  }
+  
+  formula_str <- paste("Surv(time = age_entry, time2 = age_event, indicator) ~ loneliness *", var, "+", paste(covariates_model3, collapse = " + "))
+  formula <- as.formula(formula_str)
+  
+  cox_model <- coxph(formula, data = aaa_combined)
+  
+  tryCatch({
+    interaction_metrics <- calculate_interaction_metrics(cox_model, var)
+    
+    addictive_loneliness <- rbind(addictive_loneliness, data.frame(
+      Variable = var,
+      RERI = interaction_metrics$RERI,
+      RERI_Lower = interaction_metrics$ci_RERI[1],
+      RERI_Upper = interaction_metrics$ci_RERI[2],
+      AP = interaction_metrics$AP,
+      AP_Lower = interaction_metrics$ci_AP[1],
+      AP_Upper = interaction_metrics$ci_AP[2],
+      SI = interaction_metrics$SI,
+      SI_Lower = interaction_metrics$ci_SI[1],
+      SI_Upper = interaction_metrics$ci_SI[2],
+      stringsAsFactors = FALSE
+    ))
+    
+  }, error = function(e) {})
+}
+
+data <- isolation_interaction
+data2 <- addictive_isolation
+
+data$RERI <- NA
+data$RERI_Lower <- NA
+data$RERI_Upper <- NA
+data$AP <- NA
+data$AP_Lower <- NA
+data$AP_Upper <- NA
+data$SI <- NA
+data$SI_Lower <- NA
+data$SI_Upper <- NA
+
+data_rows <- c(4, 5, 8, 11, 12, 13, 16, 19, 20, 23, 24, 27, 28)
+data2_rows <- 1:length(data_rows)
+
+for (i in seq_along(data_rows)) {
+  data[data_rows[i], c("RERI", "RERI_Lower", "RERI_Upper", "AP", "AP_Lower", "AP_Upper", "SI", "SI_Lower", "SI_Upper")] <- 
+    data2[data2_rows[i], c("RERI", "RERI_Lower", "RERI_Upper", "AP", "AP_Lower", "AP_Upper", "SI", "SI_Lower", "SI_Upper")]
+}
+
+dt <- data
+dt$" " <- "                  "
+dt$"RERI(95%CI)" <- ifelse(is.na(dt$RERI), "",
+                           sprintf('%.3f (%.3f - %.3f)', dt$RERI, dt$RERI_Lower, dt$RERI_Upper))
+
+dt$"AP(95%CI)" <- ifelse(is.na(dt$AP), "",
+                         sprintf('%.3f (%.3f - %.3f)', dt$AP, dt$AP_Lower, dt$AP_Upper))
+
+dt[, 4:6] <- apply(dt[, 4:6], 2, as.numeric)
+
+dt$"HR (95% CI)" <- ifelse(is.na(dt$`Point Estimate`), "",
+                           sprintf("%.3f (%.3f to %.3f)",dt$`Point Estimate`, dt$Lower, dt$Upper))
+
+dt$Count <- as.character(dt$Count)
+dt$Percent <- as.character(dt$Percent)
+dt$`P value` <- as.character(dt$`P value`)
+
+dt$Count[is.na(dt$Count)] <- ""
+dt$Percent[is.na(dt$Percent)] <- ""
+dt$`P value`[is.na(dt$`P value`)] <- ""
+dt$`P for interaction`[is.na(dt$`P for interaction`)] <- ""
+
+saveRDS(dt, "isolation_cox_interaction.rds")
+
+data <- loneliness_interaction
+data2 <- addictive_loneliness
+
+data$RERI <- NA
+data$RERI_Lower <- NA
+data$RERI_Upper <- NA
+data$AP <- NA
+data$AP_Lower <- NA
+data$AP_Upper <- NA
+data$SI <- NA
+data$SI_Lower <- NA
+data$SI_Upper <- NA
+
+data_rows <- c(4, 5, 8, 11, 12, 13, 16, 19, 20, 23, 24, 27, 28)
+data2_rows <- 1:length(data_rows)
+
+for (i in seq_along(data_rows)) {
+  data[data_rows[i], c("RERI", "RERI_Lower", "RERI_Upper", "AP", "AP_Lower", "AP_Upper", "SI", "SI_Lower", "SI_Upper")] <- 
+    data2[data2_rows[i], c("RERI", "RERI_Lower", "RERI_Upper", "AP", "AP_Lower", "AP_Upper", "SI", "SI_Lower", "SI_Upper")]
+}
+
+dt <- data
+dt$" " <- "                  "
+dt$"RERI(95%CI)" <- ifelse(is.na(dt$RERI), "",
+                           sprintf('%.3f (%.3f - %.3f)', dt$RERI, dt$RERI_Lower, dt$RERI_Upper))
+
+dt$"AP(95%CI)" <- ifelse(is.na(dt$AP), "",
+                         sprintf('%.3f (%.3f - %.3f)', dt$AP, dt$AP_Lower, dt$AP_Upper))
+
+dt$"P for interaction" <- dt$`P.for.interaction`
+
+dt[, 4:6] <- apply(dt[, 4:6], 2, as.numeric)
+
+dt$"HR (95% CI)" <- ifelse(is.na(dt$Point.Estimate), "",
+                           sprintf("%.2f (%.2f to %.2f)",
+                                   dt$Point.Estimate, dt$Lower, dt$Upper))
+
+dt$Count <- as.character(dt$Count)
+dt$Percent <- as.character(dt$Percent)
+dt$`P.value` <- as.character(dt$`P.value`)
+
+dt$Count[is.na(dt$Count)] <- ""
+dt$Percent[is.na(dt$Percent)] <- ""
+dt$`P.value`[is.na(dt$`P.value`)] <- ""
+dt$`P for interaction`[is.na(dt$`P for interaction`)] <- ""
+
+saveRDS(dt, "loneliness_cox_interaction.rds")
+
+##cmp model
+data <- readRDS("")
+
+library(fastcmprsk)
+library(dplyr)
+library(data.table)
+library(flextable)
+library(officer)
+
+incident <- data
+
+calculate_fg <- function(data, filter_expr, group_var, covariates) {
+  data_filtered <- data %>% filter(eval(parse(text = filter_expr))) %>% na.omit()
+  formula <- as.formula(paste("Crisk(delta_years, indicator) ~", paste(c(group_var, covariates), collapse = " + ")))
+  fg_model <- tryCatch(
+    fastCrr(formula, data = data_filtered, variance = TRUE),
+    error = function(e) NULL
+  )
+  if (is.null(fg_model)) {
+    return(list(sHR = NA, CI = "NA", CI_lower = NA, CI_upper = NA, p_value = "NA"))
+  }
+  sHR <- exp(fg_model$coef[1])
+  SE_log_sHR <- sqrt(fg_model$var[1, 1])
+  CI_lower <- exp(fg_model$coef[1] - 1.96 * SE_log_sHR)
+  CI_upper <- exp(fg_model$coef[1] + 1.96 * SE_log_sHR)
+  p_value <- 2 * (1 - pnorm(abs(fg_model$coef[1] / SE_log_sHR)))
+  p_value <- ifelse(p_value <= 0.001, "<0.001", sprintf("%.3f", p_value))
+  list(sHR = sHR, CI = paste0("[", round(CI_lower, 2), "-", round(CI_upper, 2), "]"),
+       CI_lower = CI_lower, CI_upper = CI_upper, p_value = p_value)
+}
+
+aaa_doubt <- data
+FineGraySubgroup <- function(
+    data,
+    group_var = c("age_group", "Sex", "Income", "Education", "Employment", "Smoking_status", "Alcohol_status"),
+    covariates = c("Age", "Sex", "Race", "MAP", "BMI", "UK_Center", "Employment", 
+                   "Education", "Smoking_status", "Alcohol_status", "Hand_grip", 
+                   "day_exposure", "diet_score", "depress_mood", "sleep_score", 
+                   "Townsend_deprivation_index", "Family_cancer", "Overall_health_rating", "Income"),
+    decimal.hr = 5,
+    decimal.pvalue = 5
+) {
+  if (!"delta_years" %in% colnames(data)) {
+    data$delta_years <- data$age_event - data$age_entry
+    data$delta_years <- pmax(data$delta_years, 0.001)
+  }
+  
+  results <- data.frame(
+    Subgroup = character(),
+    Level = character(),
+    N = numeric(),
+    Events = numeric(),
+    sHR = numeric(),
+    CI_lower = numeric(),
+    CI_upper = numeric(),
+    P_value = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (subgroup in group_var) {
+    levels_subgroup <- unique(na.omit(data[[subgroup]]))
+    
+    for (level in levels_subgroup) {
+      filter_expr <- paste0(subgroup, " == '", level, "'")
+      data_subset <- data %>% filter(eval(parse(text = filter_expr))) %>% na.omit()
+      
+      n_total <- nrow(data_subset)
+      n_events <- sum(data_subset$indicator == 1, na.rm = TRUE)
+      
+      covars <- setdiff(covariates, subgroup)
+      
+      fg_result <- calculate_fg(
+        data = data,
+        filter_expr = filter_expr,
+        group_var = "isolation",
+        covariates = covars
+      )
+      
+      results <- rbind(
+        results,
+        data.frame(
+          Subgroup = subgroup,
+          Level = as.character(level),
+          N = n_total,
+          Events = n_events,
+          sHR = round(fg_result$sHR, decimal.hr),
+          CI_lower = round(fg_result$CI_lower, decimal.hr),
+          CI_upper = round(fg_result$CI_upper, decimal.hr),
+          P_value = round(fg_result$p_value, decimal.pvalue),
+          stringsAsFactors = FALSE
+        )
+      )
+    }
+  }
+  
+  return(results)
+}
+
+calculate_fg <- function(data, filter_expr, group_var, covariates) {
+  data_filtered <- data %>% filter(eval(parse(text = filter_expr))) %>% na.omit()
+  formula <- as.formula(paste("Crisk(delta_years, indicator) ~", paste(c(group_var, covariates), collapse = " + ")))
+  fg_model <- tryCatch(
+    fastCrr(formula, data = data_filtered, variance = TRUE),
+    error = function(e) {
+      NULL
+    }
+  )
+  if (is.null(fg_model)) {
+    return(list(sHR = NA, CI_lower = NA, CI_upper = NA, p_value = NA))
+  }
+  sHR <- exp(fg_model$coef[1])
+  SE_log_sHR <- sqrt(fg_model$var[1, 1])
+  CI_lower <- exp(fg_model$coef[1] - 1.96 * SE_log_sHR)
+  CI_upper <- exp(fg_model$coef[1] + 1.96 * SE_log_sHR)
+  p_value <- 2 * (1 - pnorm(abs(fg_model$coef[1] / SE_log_sHR)))
+  list(sHR = sHR, CI_lower = CI_lower, CI_upper = CI_upper, p_value = p_value)
+}
+
+aaa_doubt$delta_years <- pmax(aaa_doubt$delta_years, 0.001)
+
+fg_results <- FineGraySubgroup(
+  data = aaa_doubt,
+  group_var = c("age_group", "Sex", "Income", "Education", "Employment", "Smoking_status", "Alcohol_status")
+)
+print(fg_results)
+saveRDS(fg_results, "subgroup_cmp_isolation.rds")
+
+library(cmprsk)
+library(dplyr)
+aaa_doubt <- data
+FineGraySubgroup <- function(
+    data,
+    group_var = c("age_group", "Sex", "Income", "Education", "Employment", "Smoking_status", "Alcohol_status"),
+    covariates = c("Age", "Sex", "Race", "MAP", "BMI", "UK_Center", "Employment", 
+                   "Education", "Smoking_status", "Alcohol_status", "Hand_grip", 
+                   "day_exposure", "diet_score", "depress_mood", "sleep_score", 
+                   "Townsend_deprivation_index", "Family_cancer", "Overall_health_rating", "Income"),
+    decimal.hr = 5,
+    decimal.pvalue = 5
+) {
+  if (!"delta_years" %in% colnames(data)) {
+    data$delta_years <- data$age_event - data$age_entry
+    data$delta_years <- pmax(data$delta_years, 0.001)
+  }
+  
+  results <- data.frame(
+    Subgroup = character(),
+    Level = character(),
+    N = numeric(),
+    Events = numeric(),
+    sHR = numeric(),
+    CI_lower = numeric(),
+    CI_upper = numeric(),
+    P_value = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (subgroup in group_var) {
+    levels_subgroup <- unique(na.omit(data[[subgroup]]))
+    
+    for (level in levels_subgroup) {
+      filter_expr <- paste0(subgroup, " == '", level, "'")
+      data_subset <- data %>% filter(eval(parse(text = filter_expr))) %>% na.omit()
+      
+      n_total <- nrow(data_subset)
+      n_events <- sum(data_subset$indicator == 1, na.rm = TRUE)
+      
+      covars <- setdiff(covariates, subgroup)
+      
+      fg_result <- calculate_fg(
+        data = data,
+        filter_expr = filter_expr,
+        group_var = "loneliness",
+        covariates = covars
+      )
+      
+      results <- rbind(
+        results,
+        data.frame(
+          Subgroup = subgroup,
+          Level = as.character(level),
+          N = n_total,
+          Events = n_events,
+          sHR = round(fg_result$sHR, decimal.hr),
+          CI_lower = round(fg_result$CI_lower, decimal.hr),
+          CI_upper = round(fg_result$CI_upper, decimal.hr),
+          P_value = round(fg_result$p_value, decimal.pvalue),
+          stringsAsFactors = FALSE
+        )
+      )
+    }
+  }
+  
+  return(results)
+}
+
+calculate_fg <- function(data, filter_expr, group_var, covariates) {
+  data_filtered <- data %>% filter(eval(parse(text = filter_expr))) %>% na.omit()
+  formula <- as.formula(paste("Crisk(delta_years, indicator) ~", paste(c(group_var, covariates), collapse = " + ")))
+  fg_model <- tryCatch(
+    fastCrr(formula, data = data_filtered, variance = TRUE),
+    error = function(e) {
+      NULL
+    }
+  )
+  if (is.null(fg_model)) {
+    return(list(sHR = NA, CI_lower = NA, CI_upper = NA, p_value = NA))
+  }
+  sHR <- exp(fg_model$coef[1])
+  SE_log_sHR <- sqrt(fg_model$var[1, 1])
+  CI_lower <- exp(fg_model$coef[1] - 1.96 * SE_log_sHR)
+  CI_upper <- exp(fg_model$coef[1] + 1.96 * SE_log_sHR)
+  p_value <- 2 * (1 - pnorm(abs(fg_model$coef[1] / SE_log_sHR)))
+  list(sHR = sHR, CI_lower = CI_lower, CI_upper = CI_upper, p_value = p_value)
+}
+
+aaa_doubt$delta_years <- pmax(aaa_doubt$delta_years, 0.001)
+
+fg_results <- FineGraySubgroup(
+  data = aaa_doubt,
+  group_var = c("age_group", "Sex", "Income", "Education", "Employment", "Smoking_status", "Alcohol_status")
+)
+print(fg_results)
+saveRDS(fg_results, "subgroup_cmp_loneliness.rds")
+
+library(fastcmprsk)
+library(dplyr)
+
+aaa_doubt$delta_years <- pmax(aaa_doubt$age_event - aaa_doubt$age_entry, 0.001) + runif(nrow(aaa_doubt), 0, 0.001)
+
+aaa_doubt$isolation <- factor(aaa_doubt$isolation, levels = c("0", "1"))
+aaa_doubt$age_group <- factor(aaa_doubt$age_group, levels = c("0-49", "50-59", "60 and older"))
+aaa_doubt$Sex <- factor(aaa_doubt$Sex, levels = c("Female", "Male"))
+aaa_doubt$Income <- factor(aaa_doubt$Income, levels = c("Medium", "High", "Low", "Unknown"))
+aaa_doubt$Education <- factor(aaa_doubt$Education, levels = c("Not college degree", "College/university degree"))
+aaa_doubt$Employment <- factor(aaa_doubt$Employment, levels = c("Employed", "Others", "Retired"))
+aaa_doubt$Smoking_status <- factor(aaa_doubt$Smoking_status, levels = c("Current", "Never", "Previous"))
+aaa_doubt$Alcohol_status <- factor(aaa_doubt$Alcohol_status, levels = c("Current", "Never", "Previous"))
+
+covariates_base <- c("Age", "Sex", "Race", "MAP", "BMI", "UK_Center",
+                     "Employment", "Education", "Smoking_status", "Alcohol_status",
+                     "Hand_grip", "day_exposure", "diet_score", "depress_mood",
+                     "sleep_score", "Townsend_deprivation_index", "Family_cancer",
+                     "Overall_health_rating", "Income")
+num_cov <- length(covariates_base)
+
+group_var <- c("age_group", "Sex", "Income", "Education", "Employment", "Smoking_status", "Alcohol_status")
+
+interaction_df_isolation <- data.frame(
+  Subgroup = character(),
+  Level = character(),
+  P_for_interaction = numeric(),
+  RERI = numeric(),
+  RERI_lower = numeric(),
+  RERI_upper = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (subgroup in group_var) {
+  levels_subgroup <- levels(aaa_doubt[[subgroup]])
+  ref_level <- levels_subgroup[1]
+  
+  data_subset_all <- aaa_doubt %>% filter(!is.na(!!sym(subgroup))) %>% na.omit() %>% droplevels()
+  
+  formula_no_inter <- as.formula(paste("Crisk(delta_years, indicator) ~ isolation +", subgroup, "+", paste(covariates_base, collapse = " + ")))
+  fg_model_no_inter <- tryCatch(
+    fastCrr(formula_no_inter, data = data_subset_all, variance = TRUE),
+    error = function(e) {
+      NULL
+    }
+  )
+  
+  formula_inter <- as.formula(paste("Crisk(delta_years, indicator) ~ isolation *", subgroup, "+", paste(covariates_base, collapse = " + ")))
+  fg_model_inter <- tryCatch(
+    fastCrr(formula_inter, data = data_subset_all, variance = TRUE),
+    error = function(e) {
+      NULL
+    }
+  )
+  
+  p_inter <- NA
+  if (!is.null(fg_model_no_inter) && !is.null(fg_model_inter)) {
+    df_diff <- length(levels_subgroup) - 1
+    lr_stat <- 2 * (fg_model_inter$logLik - fg_model_no_inter$logLik)
+    if (!is.na(lr_stat) && lr_stat >= 0) {
+      p_inter <- pchisq(lr_stat, df_diff, lower.tail = FALSE)
+    }
+  }
+  
+  for (level in levels_subgroup) {
+    RERI <- NA
+    RERI_lower <- NA
+    RERI_upper <- NA
+    if (level != ref_level) {
+      filter_expr_level <- paste0(subgroup, " == '", level, "' | ", subgroup, " == '", ref_level, "'")
+      data_subset_level <- aaa_doubt %>% filter(eval(parse(text = filter_expr_level))) %>% na.omit() %>% droplevels()
+      data_subset_level[[subgroup]] <- factor(data_subset_level[[subgroup]], levels = c(ref_level, level))
+      
+      covars <- setdiff(covariates_base, subgroup)
+      num_cov <- length(covars)
+      formula_level <- as.formula(paste("Crisk(delta_years, indicator) ~ isolation *", subgroup, "+", paste(covars, collapse = " + ")))
+      fg_model_level <- tryCatch(
+        fastCrr(formula_level, data = data_subset_level, variance = TRUE),
+        error = function(e) {
+          NULL
+        }
+      )
+      
+      if (!is.null(fg_model_level)) {
+        num_levels <- 2
+        expected_coef <- 1 + (num_levels - 1) + num_cov + 1
+        idx_isolation <- 1
+        idx_subgroup <- 2
+        idx_interaction <- num_cov + 3
+        if (length(fg_model_level$coef) >= idx_interaction) {
+          coef_isolation <- fg_model_level$coef[idx_isolation]
+          coef_subgroup <- fg_model_level$coef[idx_subgroup]
+          coef_interaction <- fg_model_level$coef[idx_interaction]
+          sHR11 <- exp(coef_isolation + coef_subgroup + coef_interaction)
+          sHR10 <- exp(coef_isolation)
+          sHR01 <- exp(coef_subgroup)
+          RERI <- sHR11 - sHR10 - sHR01 + 1
+          
+          var_isolation <- fg_model_level$var[idx_isolation, idx_isolation]
+          var_subgroup <- fg_model_level$var[idx_subgroup, idx_subgroup]
+          var_interaction <- fg_model_level$var[idx_interaction, idx_interaction]
+          cov_isolation_subgroup <- fg_model_level$var[idx_isolation, idx_subgroup]
+          cov_isolation_interaction <- fg_model_level$var[idx_isolation, idx_interaction]
+          cov_subgroup_interaction <- fg_model_level$var[idx_subgroup, idx_interaction]
+          
+          var_sHR11 <- sHR11^2 * (var_isolation + var_subgroup + var_interaction +
+                                    2 * cov_isolation_subgroup + 2 * cov_isolation_interaction +
+                                    2 * cov_subgroup_interaction)
+          var_sHR10 <- sHR10^2 * var_isolation
+          var_sHR01 <- sHR01^2 * var_subgroup
+          cov_sHR11_sHR10 <- sHR11 * sHR10 * (var_isolation + cov_isolation_subgroup + cov_isolation_interaction)
+          cov_sHR11_sHR01 <- sHR11 * sHR01 * (cov_isolation_subgroup + var_subgroup + cov_subgroup_interaction)
+          cov_sHR10_sHR01 <- sHR10 * sHR01 * cov_isolation_subgroup
+          
+          var_RERI <- var_sHR11 + var_sHR10 + var_sHR01 -
+            2 * cov_sHR11_sHR10 - 2 * cov_sHR11_sHR01 + 2 * cov_sHR10_sHR01
+          se_RERI <- sqrt(var_RERI)
+          
+          RERI_lower <- RERI - 1.96 * se_RERI
+          RERI_upper <- RERI + 1.96 * se_RERI
+        }
+      }
+    }
+    
+    interaction_df_isolation <- rbind(
+      interaction_df_isolation,
+      data.frame(
+        Subgroup = subgroup,
+        Level = as.character(level),
+        P_for_interaction = round(p_inter, 5),
+        RERI = round(RERI, 5),
+        RERI_lower = round(RERI_lower, 5),
+        RERI_upper = round(RERI_upper, 5),
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+}
+
+print("Interaction results for isolation:")
+print(interaction_df_isolation)
+saveRDS(interaction_df_isolation, "isolation_cmp_interaction.rds")
+
+interaction_df_loneliness <- data.frame(
+  Subgroup = character(),
+  Level = character(),
+  P_for_interaction = numeric(),
+  RERI = numeric(),
+  RERI_lower = numeric(),
+  RERI_upper = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (subgroup in group_var) {
+  levels_subgroup <- levels(aaa_doubt[[subgroup]])
+  ref_level <- levels_subgroup[1]
+  
+  data_subset_all <- aaa_doubt %>% filter(!is.na(!!sym(subgroup))) %>% na.omit() %>% droplevels()
+  
+  formula_no_inter <- as.formula(paste("Crisk(delta_years, indicator) ~ loneliness +", subgroup, "+", paste(covariates_base, collapse = " + ")))
+  fg_model_no_inter <- tryCatch(
+    fastCrr(formula_no_inter, data = data_subset_all, variance = TRUE),
+    error = function(e) {
+      NULL
+    }
+  )
+  
+  formula_inter <- as.formula(paste("Crisk(delta_years, indicator) ~ loneliness *", subgroup, "+", paste(covariates_base, collapse = " + ")))
+  fg_model_inter <- tryCatch(
+    fastCrr(formula_inter, data = data_subset_all, variance = TRUE),
+    error = function(e) {
+      NULL
+    }
+  )
+  
+  p_inter <- NA
+  if (!is.null(fg_model_no_inter) && !is.null(fg_model_inter)) {
+    df_diff <- length(levels_subgroup) - 1
+    lr_stat <- 2 * (fg_model_inter$logLik - fg_model_no_inter$logLik)
+    if (!is.na(lr_stat) && lr_stat >= 0) {
+      p_inter <- pchisq(lr_stat, df_diff, lower.tail = FALSE)
+    }
+  }
+  
+  for (level in levels_subgroup) {
+    RERI <- NA
+    RERI_lower <- NA
+    RERI_upper <- NA
+    if (level != ref_level) {
+      filter_expr_level <- paste0(subgroup, " == '", level, "' | ", subgroup, " == '", ref_level, "'")
+      data_subset_level <- aaa_doubt %>% filter(eval(parse(text = filter_expr_level))) %>% na.omit() %>% droplevels()
+      data_subset_level[[subgroup]] <- factor(data_subset_level[[subgroup]], levels = c(ref_level, level))
+      
+      covars <- setdiff(covariates_base, subgroup)
+      num_cov <- length(covars)
+      formula_level <- as.formula(paste("Crisk(delta_years, indicator) ~ loneliness *", subgroup, "+", paste(covars, collapse = " + ")))
+      fg_model_level <- tryCatch(
+        fastCrr(formula_level, data = data_subset_level, variance = TRUE),
+        error = function(e) {
+          NULL
+        }
+      )
+      
+      if (!is.null(fg_model_level)) {
+        num_levels <- 2
+        expected_coef <- 1 + (num_levels - 1) + num_cov + 1
+        idx_loneliness <- 1
+        idx_subgroup <- 2
+        idx_interaction <- num_cov + 3
+        if (length(fg_model_level$coef) >= idx_interaction) {
+          coef_loneliness <- fg_model_level$coef[idx_loneliness]
+          coef_subgroup <- fg_model_level$coef[idx_subgroup]
+          coef_interaction <- fg_model_level$coef[idx_interaction]
+          sHR11 <- exp(coef_loneliness + coef_subgroup + coef_interaction)
+          sHR10 <- exp(coef_loneliness)
+          sHR01 <- exp(coef_subgroup)
+          RERI <- sHR11 - sHR10 - sHR01 + 1
+          
+          var_loneliness <- fg_model_level$var[idx_loneliness, idx_loneliness]
+          var_subgroup <- fg_model_level$var[idx_subgroup, idx_subgroup]
+          var_interaction <- fg_model_level$var[idx_interaction, idx_interaction]
+          cov_loneliness_subgroup <- fg_model_level$var[idx_loneliness, idx_subgroup]
+          cov_loneliness_interaction <- fg_model_level$var[idx_loneliness, idx_interaction]
+          cov_subgroup_interaction <- fg_model_level$var[idx_subgroup, idx_interaction]
+          
+          var_sHR11 <- sHR11^2 * (var_loneliness + var_subgroup + var_interaction +
+                                    2 * cov_loneliness_subgroup + 2 * cov_loneliness_interaction +
+                                    2 * cov_subgroup_interaction)
+          var_sHR10 <- sHR10^2 * var_loneliness
+          var_sHR01 <- sHR01^2 * var_subgroup
+          cov_sHR11_sHR10 <- sHR11 * sHR10 * (var_loneliness + cov_loneliness_subgroup + cov_loneliness_interaction)
+          cov_sHR11_sHR01 <- sHR11 * sHR01 * (cov_loneliness_subgroup + var_subgroup + cov_subgroup_interaction)
+          cov_sHR10_sHR01 <- sHR10 * sHR01 * cov_loneliness_subgroup
+          
+          var_RERI <- var_sHR11 + var_sHR10 + var_sHR01 -
+            2 * cov_sHR11_sHR10 - 2 * cov_sHR11_sHR01 + 2 * cov_sHR10_sHR01
+          se_RERI <- sqrt(var_RERI)
+          
+          RERI_lower <- RERI - 1.96 * se_RERI
+          RERI_upper <- RERI + 1.96 * se_RERI
+        }
+      }
+    }
+    
+    interaction_df_loneliness <- rbind(
+      interaction_df_loneliness,
+      data.frame(
+        Subgroup = subgroup,
+        Level = as.character(level),
+        P_for_interaction = round(p_inter, 5),
+        RERI = round(RERI, 5),
+        RERI_lower = round(RERI_lower, 5),
+        RERI_upper = round(RERI_upper, 5),
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+}
+
+print("Interaction results for loneliness:")
+print(interaction_df_loneliness)
+saveRDS(interaction_df_loneliness, "loneliness_cmp_interaction.rds")
