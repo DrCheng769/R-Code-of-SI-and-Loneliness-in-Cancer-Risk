@@ -1,0 +1,123 @@
+group_conditions <- list(
+  list(group = "Male", expr = "Sex == 'Male'"),
+  list(group = "Female", expr = "Sex == 'Female'"),
+  list(group = "0-49", expr = "Age >= '0' & Age <= '49'"),
+  list(group = "50-59", expr = "Age > '49' & Age <= '59'"),
+  list(group = "59-", expr = "Age > '59'"),
+  list(group = "High Income", expr = "Income == 'High'"),
+  list(group = "Low Income", expr = "Income == 'Low'"),
+  list(group = "Medium Income", expr = "Income == 'Medium'"),
+  list(group = "Unknow Income", expr = "Income == 'Unknown'"),
+  list(group = "College/university degree", expr = "Education == 'College/university degree'"),
+  list(group = "Not college degree", expr = "Education == 'Not college degree'"),
+  list(group = "Employed", expr = "Employment == 'Employed'"),
+  list(group = "Retired", expr = "Employment == 'Retired'"),
+  list(group = "Other Employment", expr = "Employment == 'Others'"),
+  list(group = "Previous smoker", expr = "Smoking_status == 'Previous'"),
+  list(group = "Current smoker", expr = "Smoking_status == 'Current'"),
+  list(group = "Never smoker", expr = "Smoking_status == 'Never'"),
+  list(group = "Current drinker", expr = "Alcohol_status == 'Current'"),
+  list(group = "Previous drinker", expr = "Alcohol_status == 'Previous'"),
+  list(group = "Nondrinker", expr = "Alcohol_status == 'Never'")
+)
+
+calculate_excess_incidence <- function(cases_exposed, person_years_exposed, cases_unexposed, person_years_unexposed) {
+  incidence_exposed <- (cases_exposed / person_years_exposed) * 10000
+  incidence_unexposed <- (cases_unexposed / person_years_unexposed) * 10000
+  excess_incidence <- incidence_exposed - incidence_unexposed
+  SE <- sqrt((incidence_exposed / cases_exposed) + (incidence_unexposed / cases_unexposed))
+  lower_CI <- excess_incidence - 1.96 * SE
+  upper_CI <- excess_incidence + 1.96 * SE
+  list(excess_incidence = excess_incidence, lower_CI = lower_CI, upper_CI = upper_CI)
+}
+
+calculate_group_irr <- function(data, exposure, group_conditions) {
+  result_table <- data.frame(
+    group = character(),
+    exposure = character(),
+    N_incident = numeric(),
+    cases = numeric(),
+    person_years = numeric(),
+    incident_per_10000_person_years = numeric(),
+    IRR = character(),
+    Excess_Incidence = character(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (comb in group_conditions) {
+    group_name <- comb$group
+    filter_expr <- comb$expr
+    
+    data_filtered <- data %>% dplyr::filter(eval(parse(text = filter_expr))) %>% na.omit()
+    N <- nrow(data_filtered)
+    cases <- sum(as.numeric(as.character(data_filtered$indicator)))
+    person_years <- sum(as.numeric(as.character(data_filtered$delta_years)))
+    incident_per_10000_person_years <- round((cases/person_years)*10000,0)
+    
+    data_exposed <- data %>% dplyr::filter(eval(parse(text = filter_expr)) & get(exposure) == 1) %>% na.omit()
+    N_exposed <- nrow(data_exposed)
+    cases_exposed <- sum(as.numeric(as.character(data_exposed$indicator)))
+    person_years_exposed <- sum(as.numeric(as.character(data_exposed$delta_years)))
+    incident_per_10000_person_years_exposed <- round((cases_exposed/person_years_exposed)*10000,0)
+    
+    data_unexposed <- data %>% dplyr::filter(eval(parse(text = filter_expr)) & get(exposure) == 0) %>% na.omit()
+    N_unexposed <- nrow(data_unexposed)
+    cases_unexposed <- sum(as.numeric(as.character(data_unexposed$indicator)))
+    person_years_unexposed <- sum(as.numeric(as.character(data_unexposed$delta_years)))
+    incident_per_10000_person_years_unexposed <- round((cases_unexposed/person_years_unexposed)*10000,0)
+    
+    incidence_exposed <- (cases_exposed / person_years_exposed) * 10000
+    incidence_unexposed <- (cases_unexposed / person_years_unexposed) * 10000
+    IRR <- incidence_exposed / incidence_unexposed
+    SE_log_IRR <- sqrt((1 / cases_exposed) + (1 / cases_unexposed))
+    log_IRR <- log(IRR)
+    lower_log_CI <- log_IRR - 1.96 * SE_log_IRR
+    upper_log_CI <- log_IRR + 1.96 * SE_log_IRR
+    lower_CI <- exp(lower_log_CI)
+    upper_CI <- exp(upper_log_CI)
+    
+    excess_incidence_results <- calculate_excess_incidence(cases_exposed, person_years_exposed, cases_unexposed, person_years_unexposed)
+    
+    result_table <- rbind(result_table, data.frame(
+      group = group_name,
+      exposure = "",
+      N_incident = N,
+      cases = cases,
+      person_years = person_years,
+      incident_per_10000_person_years = incident_per_10000_person_years,
+      IRR = "",
+      Excess_Incidence = ""
+    ))
+    
+    result_table <- rbind(result_table, data.frame(
+      group = "",
+      exposure = "unexpose",
+      N_incident = N_unexposed,
+      cases = cases_unexposed,
+      person_years = person_years_unexposed,
+      incident_per_10000_person_years = incident_per_10000_person_years_unexposed,
+      IRR = "1 [Reference]",
+      Excess_Incidence = "0 [Reference]"
+    ))
+    
+    result_table <- rbind(result_table, data.frame(
+      group = "",
+      exposure = "expose",
+      N_incident = N_exposed,
+      cases = cases_exposed,
+      person_years = person_years_exposed,
+      incident_per_10000_person_years = incident_per_10000_person_years_exposed,
+      IRR = paste0(round(IRR, 2), " (", round(lower_CI, 2), " to ", round(upper_CI, 2), ")"),
+      Excess_Incidence = paste0(round(excess_incidence_results$excess_incidence, 2), " (", round(excess_incidence_results$lower_CI, 2), " to ", round(excess_incidence_results$upper_CI, 2), ")")
+    ))
+  }
+  
+  return(result_table)
+}
+
+
+result_table_isolation <- calculate_group_irr(incident, "isolation", group_conditions)
+saveRDS(result_table_isolation, "IRR_group_isolation.rds")
+
+result_table_loneliness <- calculate_group_irr(incident, "loneliness", group_conditions)
+saveRDS(result_table_loneliness, "IRR_group_loneliness.rds")
