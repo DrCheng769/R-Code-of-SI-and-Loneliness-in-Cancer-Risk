@@ -1,0 +1,115 @@
+library(irr)
+library(dplyr)
+library(tidyr)
+library(xtable)
+
+compute_stability_simple <- function(df, var_prefix, instances = c(0,1,2,3)) {
+  results <- list()
+  pairs <- list(c(0,1), c(0,2), c(0,3))
+  
+  for (pair in pairs) {
+    i <- pair[1]
+    j <- pair[2]
+    col_i <- paste0(var_prefix, i)
+    col_j <- paste0(var_prefix, j)
+    
+    sub_df <- df %>% select(Participant.ID, !!col_i, !!col_j) %>% na.omit()
+    n <- nrow(sub_df)
+    
+    if (n < 100) {
+      results[[paste("Pair", i, "-", j)]] <- list(n = n, note = "Sample size too small (<100)")
+      next
+    }
+    
+    crosstab <- table(sub_df[[col_i]], sub_df[[col_j]])
+    agreement <- sum(diag(crosstab)) / sum(crosstab) * 100
+    
+    kappa <- tryCatch({
+      kappa2(sub_df[, c(col_i, col_j)], "unweighted")$value
+    }, error = function(e) NA)
+    
+    patterns <- sub_df %>%
+      mutate(pattern = case_when(
+        .data[[col_i]] == 0 & .data[[col_j]] == 0 ~ "Never",
+        .data[[col_i]] == 0 & .data[[col_j]] == 1 ~ "Incident",
+        .data[[col_i]] == 1 & .data[[col_j]] == 0 ~ "Remitted",
+        .data[[col_i]] == 1 & .data[[col_j]] == 1 ~ "Persistent"
+      )) %>%
+      count(pattern) %>%
+      mutate(perc = n / sum(n) * 100)
+    
+    results[[paste("Pair", i, "-", j)]] <- list(
+      n = n, crosstab = crosstab, agreement = agreement,
+      kappa = kappa, patterns = patterns
+    )
+  }
+  
+  return(results)
+}
+
+compute_trend_simple <- function(df, var_prefix, instances = c(0,1,2,3)) {
+  props <- sapply(instances, function(i) {
+    mean(df[[paste0(var_prefix, i)]], na.rm = TRUE) * 100
+  })
+  
+  ns <- sapply(instances, function(i) {
+    sum(!is.na(df[[paste0(var_prefix, i)]]))
+  })
+  
+  trend_df <- data.frame(time = instances, prop = props)
+  trend_model <- lm(prop ~ time, data = trend_df)
+  trend_summary <- summary(trend_model)
+  
+  list(
+    proportions = data.frame(instance = instances, n = ns, prop = props),
+    trend_slope = coef(trend_model)["time"],
+    trend_p = trend_summary$coefficients["time", "Pr(>|t|)"]
+  )
+}
+
+iso_results <- compute_stability_simple(isolation, "isolation")
+iso_trend <- compute_trend_simple(isolation, "isolation")
+lon_results <- compute_stability_simple(loneliness, "loneliness")
+lon_trend <- compute_trend_simple(loneliness, "loneliness")
+
+cat("\n=== Isolation Pairwise Stability ===\n")
+for (pair in names(iso_results)) {
+  cat("\n", pair, " (N =", iso_results[[pair]]$n, ")\n")
+  if (!is.null(iso_results[[pair]]$note)) {
+    cat(iso_results[[pair]]$note, "\n")
+    next
+  }
+  cat("Cross-tabulation:\n")
+  print(xtable(iso_results[[pair]]$crosstab, caption = paste("Cross-tabulation for", pair)))
+  cat("Agreement %:", round(iso_results[[pair]]$agreement, 2), "\n")
+  cat("Cohen's Kappa:", round(iso_results[[pair]]$kappa, 2), "\n")
+  cat("Changes Patterns:\n")
+  print(xtable(iso_results[[pair]]$patterns, caption = paste("Changes Patterns for", pair)))
+}
+
+cat("\n=== Isolation Trend Analysis ===\n")
+cat("Proportions by Instance:\n")
+print(xtable(iso_trend$proportions, caption = "Proportion of Social Isolation by Instance"))
+cat("Trend Slope:", round(iso_trend$trend_slope, 4), "\n")
+cat("P-value:", round(iso_trend$trend_p, 4), "\n")
+
+cat("\n=== Loneliness Pairwise Stability ===\n")
+for (pair in names(lon_results)) {
+  cat("\n", pair, " (N =", lon_results[[pair]]$n, ")\n")
+  if (!is.null(lon_results[[pair]]$note)) {
+    cat(lon_results[[pair]]$note, "\n")
+    next
+  }
+  cat("Cross-tabulation:\n")
+  print(xtable(lon_results[[pair]]$crosstab, caption = paste("Cross-tabulation for", pair)))
+  cat("Agreement %:", round(lon_results[[pair]]$agreement, 2), "\n")
+  cat("Cohen's Kappa:", round(lon_results[[pair]]$kappa, 2), "\n")
+  cat("Changes Patterns:\n")
+  print(xtable(lon_results[[pair]]$patterns, caption = paste("Changes Patterns for", pair)))
+}
+
+cat("\n=== Loneliness Trend Analysis ===\n")
+cat("Proportions by Instance:\n")
+print(xtable(lon_trend$proportions, caption = "Proportion of Loneliness by Instance"))
+cat("Trend Slope:", round(lon_trend$trend_slope, 4), "\n")
+cat("P-value:", round(lon_trend$trend_p, 4), "\n")
