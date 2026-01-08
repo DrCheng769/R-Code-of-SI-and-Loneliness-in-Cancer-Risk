@@ -1,0 +1,84 @@
+library(survival)
+library(CMAverse)
+
+hormone_mediator$MAP <- (hormone_mediator$Systolic_blood_pressure + 2*hormone_mediator$Diastolic_blood_pressure)/3
+
+covariates <- c("Age","Sex","Race","MAP","BMI","UK_Center",
+                "Employment","Education","Smoking_status","Alcohol_status",
+                "Hand_grip","day_exposure","diet_score","depress_mood",
+                "sleep_score","Townsend_deprivation_index","Family_cancer",
+                "Overall_health_rating","Income")
+
+hormone_mediators_list <- c("SHBG","Oestradiol","Age_Menarche","Had_Menopause_hysterectomy",
+                            "Had_Menopause_No","Had_Menopause_Others","Had_Menopause_Yes",
+                            "Ever_Used_HRT_No","Ever_Used_HRT_Others","Ever_Used_HRT_Yes")
+
+results_list <- list()
+
+for(exposure_var in c("isolation", "loneliness")) {
+  for(mediator_var in hormone_mediators_list) {
+    
+    tryCatch({
+      cmest_res <- cmest(data = hormone_mediator,
+                         model = "msm",
+                         outcome = "indicator",
+                         exposure = exposure_var,
+                         mediator = mediator_var,
+                         basec = covariates,
+                         EMint = TRUE,
+                         mreg = list("linear"),
+                         yreg = "coxph",
+                         astar = 0,
+                         a = 1,
+                         mval = list(0),
+                         estimation = "imputation",
+                         inference = "bootstrap",
+                         nboot = 100)
+      
+      summary_res <- summary(cmest_res)
+      
+      results_list[[paste(exposure_var, mediator_var, sep = "_")]] <- data.frame(
+        Exposure = exposure_var,
+        Mediator = mediator_var,
+        Effect = c("cde", "pnde", "tnie", "tnde", "pnie", "te", "pm"),
+        Estimate = c(summary_res$summarydf$Estimate[1],
+                     summary_res$summarydf$Estimate[2],
+                     summary_res$summarydf$Estimate[3],
+                     summary_res$summarydf$Estimate[4],
+                     summary_res$summarydf$Estimate[5],
+                     summary_res$summarydf$Estimate[6],
+                     summary_res$summarydf$Estimate[7]),
+        CI_lower = c(summary_res$summarydf$CI.low[1],
+                     summary_res$summarydf$CI.low[2],
+                     summary_res$summarydf$CI.low[3],
+                     summary_res$summarydf$CI.low[4],
+                     summary_res$summarydf$CI.low[5],
+                     summary_res$summarydf$CI.low[6],
+                     summary_res$summarydf$CI.low[7]),
+        CI_upper = c(summary_res$summarydf$CI.high[1],
+                     summary_res$summarydf$CI.high[2],
+                     summary_res$summarydf$CI.high[3],
+                     summary_res$summarydf$CI.high[4],
+                     summary_res$summarydf$CI.high[5],
+                     summary_res$summarydf$CI.high[6],
+                     summary_res$summarydf$CI.high[7]),
+        P_value = c(summary_res$summarydf$P.value[1],
+                    summary_res$summarydf$P.value[2],
+                    summary_res$summarydf$P.value[3],
+                    summary_res$summarydf$P.value[4],
+                    summary_res$summarydf$P.value[5],
+                    summary_res$summarydf$P.value[6],
+                    summary_res$summarydf$P.value[7])
+      )
+      
+    }, error = function(e) {
+      message(paste("Error in:", exposure_var, mediator_var, "-", e$message))
+    })
+  }
+}
+
+hormone_mediation_results <- do.call(rbind, results_list)
+rownames(hormone_mediation_results) <- NULL
+
+saveRDS(hormone_mediation_results, "hormone_mediation_analysis_results.rds")
+write.csv(hormone_mediation_results, "hormone_mediation_analysis_results.csv", row.names = FALSE)
