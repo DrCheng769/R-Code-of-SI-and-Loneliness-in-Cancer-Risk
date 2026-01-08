@@ -1,0 +1,36 @@
+library(Hmisc)
+library(flextable)
+library(officer)
+
+correlation_results <- rcorr(as.matrix(data), type = "pearson")
+correlation_matrix <- correlation_results$r
+p_values <- correlation_results$P
+
+signif_matrix <- matrix("", nrow = nrow(correlation_matrix), ncol = ncol(correlation_matrix))
+for (i in 1:nrow(p_values)) {
+  for (j in 1:ncol(p_values)) {
+    if (i >= j && !is.na(p_values[i, j])) {
+      corr_val <- round(correlation_matrix[i, j], 2)
+      signif_matrix[i, j] <- case_when(
+        p_values[i, j] < 0.001 ~ paste0(corr_val, "****"),
+        p_values[i, j] < 0.01 ~ paste0(corr_val, "***"),
+        p_values[i, j] < 0.05 ~ paste0(corr_val, "**"),
+        p_values[i, j] < 0.1 ~ paste0(corr_val, "*"),
+        TRUE ~ as.character(corr_val)
+      )
+    }
+  }
+}
+
+signif_df <- as.data.frame(signif_matrix)
+colnames(signif_df) <- colnames(data)
+rownames(signif_df) <- NULL
+
+flex_tbl <- flextable(signif_df) %>%
+  autofit() %>%
+  theme_booktabs() %>%
+  align(align = "center", part = "all")
+
+doc <- read_docx() %>%
+  body_add_flextable(flex_tbl)
+print(doc, target = "baseline_matrix.docx")
