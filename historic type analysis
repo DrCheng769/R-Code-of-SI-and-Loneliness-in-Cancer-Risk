@@ -1,0 +1,666 @@
+library(survival)
+library(dplyr)
+library(forestplot)
+
+codes_text <- "
+Histology_Type\tCode\tDescription
+Adenocarcinoma, NOS\t8140/3\tNA
+Basal cell carcinoma, NOS\t8090/3\tNA
+Lobular carcinoma, NOS\t8520/3\tNA
+Infiltrating basal cell carcinoma, NOS\t8092/3\tNA
+Glioblastoma, NOS\t9440/3\tNA
+Duct adenocarcinoma\t8500/3 // 8140/3\tNA
+Hepatocellular carcinoma\t8170/3 // 8171/3 // 8172/3 // 8173/3 // 8174/3 // 8175/3\tHepatocellular carcinoma, NOS // Hepatocellular carcinoma, fibrolamellar // Hepatocellular carcinoma, scirrhous // Hepatocellular carcinoma, spindle cell variant // Hepatocellular carcinoma, clear cell type // Hepatocellular carcinoma, pleomorphic type
+Squamous cell carcinoma\t8052/2 // 8052/3 // 8070/2 // 8070/3 // 8075/3 // 8078/3 // 8083/3 // 8084/3 // 8085/3 // 8086/3\tPapillary squamous cell carcinoma, non-invasive // Papillary squamous cell carcinoma // Squamous cell carcinoma in situ, NOS // Squamous cell carcinoma, NOS // Squamous cell carcinoma, adenoid // Squamous cell carcinoma with horn formation // Basaloid squamous cell carcinoma // Squamous cell carcinoma, clear cell type // Squamous cell carcinoma, HPV positive // Squamous cell carcinoma, HPV negative
+Transitional cell carcinoma\t8120/2 // 8120/3 // 8131/3\tTransitional cell carcinoma in situ // Transitional cell carcinoma, NOS // Transitional cell carcinoma, micropapillary
+Mucinous adenocarcinoma\t8480/3\tNA
+Mature T-cell lymphoma, NOS\t9702/3\tNA
+Papillary transitional cell carcinoma\t8130/3\tNA
+Endometrioid carcinoma\t8380/3\tNA
+Hemangiosarcoma\t9120/3\tNA
+Non-small cell carcinoma\t8046/3\tNA
+Carcinoma, NOS\t8010/3\tNA
+Leiomyosarcoma, NOS\t8890/3\tNA
+Papillary adenocarcinoma, NOS\t8260/3\tNA
+Adenosquamous carcinoma\t8560/3\tNA
+Basal cell carcinoma, nodular\t8097/3\tNA
+Papillary mucinous cystadenoma, borderline malignancy\t8473/1\tNA
+Basal cell adenocarcinoma\t8147/3\tNA
+Clear cell adenocarcinoma\t8310/3 // 8322/3\tClear cell adenocarcinoma, NOS // Water-clear cell adenocarcinoma
+Renal cell carcinoma\t8312/3\tNA
+Desmoplastic melanoma\t8745/3\tNA
+Serous cystadenocarcinoma\t8441/3 // 8460/3\tSerous cystadenocarcinoma, NOS // Papillary serous cystadenocarcinoma
+Follicular lymphoma, grade 1\t9695/3\tNA
+Neuroendocrine carcinoma\t8246/3\tNA
+Malignant melanoma, NOS\t8720/3\tNA
+Multiple myeloma\t9732/3\tNA
+Tubular adenocarcinoma\t8211/3\tNA
+Superficial spreading melanoma\t8743/3\tNA
+Serous surface papillary carcinoma\t8461/3\tNA
+Serous papillary cystic tumor of borderline malignancy\t8462/1\tNA
+Neoplasm\t8000/0 // 8000/1 // 8000/3\tNeoplasm, benign // Neoplasm, uncertain whether benign or malignant // Neoplasm, malignant
+Osteosarcoma, NOS\t9180/3\tNA
+Chronic lymphocytic leukemia/small lymphocytic lymphoma\t9823/3\tNA
+Papillary serous cystadenocarcinoma\t8460/3\tNA
+Mixed germ cell tumor\t9085/3\tNA
+Oligodendroglioma, anaplastic\t9451/3\tNA
+Acute promyelocytic leukaemia\t9866/3\tAcute promyelocytic leuk., t(15;17)(q22;q11-12)
+Nodular melanoma\t8721/3\tNA
+Seminoma, NOS\t9061/3\tNA
+Malignant lymphoma, lymphoplasmacytic\t9671/3\tNA
+Mesothelioma, malignant\t9050/3\tNA
+Carcinoid tumor\t8240/3\tNA
+Fibromyxosarcoma\t8811/3\tNA
+Bile Duct Adenocarcinoma\t8140/3\tNA
+Medullary carcinoma, NOS\t8510/3\tNA
+Signet ring cell carcinoma\t8490/3\tNA
+Malignant lymphoma, non-Hodgkin\t9591/3\tNA
+Lentigo maligna melanoma\t8742/3\tNA
+Adenocarcinoma, intestinal type\t8144/3\tNA
+Adenocarcinoma in tubulovillous adenoma\t8263/3\tNA
+Malignant lymphoma, large B-cell, diffuse\t9680/3\tNA
+Squamous cell carcinoma, keratinizing\t8071/2 // 8071/3\tSq. cell carcinoma, keratinizing, NOS, in situ // Sq. cell carcinoma, keratinizing, NOS
+Chronic myeloid leukemia, NOS\t9863/3\tNA
+Malignant lymphoma, small B lymphocytic, NOS\t9670/3\tNA
+Cystadenocarcinoma, NOS\t8440/3\tNA
+Follicular lymphoma, NOS\t9690/3\tNA
+Meningioma, malignant\t9530/3\tNA
+Mesenchymoma, malignant\t8990/3\tNA
+Myelodysplastic syndrome, NOS\t9989/3\tNA
+Infiltrating ductular carcinoma\t8521/3\tNA
+Adenocarcinoma in adenomatous polyp\t8210/3\tNA
+Anaplastic large cell lymphoma, ALK negative\t9715/3\tNA
+Acute myeloid leukemia, NOS\t9861/3 // 9860/3 // 9801/3\tNA
+Spermatocytic seminoma\t9063/3\tNA
+Follicular lymphoma, grade 2\t9691/3\tNA
+Teratoma malignant, NOS\t9080/3\tNA
+Acinar cell carcinoma\t8550/3\tNA
+Myxoid liposarcoma\t8852/3\tNA
+Burkitt lymphoma, NOS\t9687/3\tNA
+Papillary carcinoma, follicular variant\t8340/3\tNA
+Intracystic carcinoma\t8504/2 // 8504/3\tNoninfiltrating intracystic carcinoma // Intracystic carcinoma, NOS
+Infiltrating duct and lobular carcinoma\t8522/3\tNA
+Apocrine adenocarcinoma\t8401/3\tNA
+Mucinous cystic tumor of borderline malignancy\t8472/1\tNA
+Myxoid chondrosarcoma\t9231/3\tNA
+Spindle cell melanoma, NOS\t8772/3\tNA
+Large cell neuroendocrine carcinoma\t8013/3\tNA
+Papillary carcinoma\t8050/3 // 8260/3\tNA
+Hodgkin lymphoma, nodular sclerosis\t9663/3\tHodgkin lymphoma, nodular sclerosis, NOS
+Follicular lymphoma, grade 3\t9698/3\tNA
+Epithelioid mesothelioma, malignant\t9052/3\tNA
+Small cell carcinoma, NOS\t8041/3\tNA
+Myeloid leukemia, NOS\t9860/3\tNA
+Squamous cell carcinoma, micro-invasive\t8076/3\tNA
+Sweat gland adenocarcinoma\t8400/3\tNA
+Multifocal superficial basal cell carcinoma\t8091/3\tNA
+Malignant lymphoma, NOS\t9590/3\tNA
+Follicular adenocarcinoma\t8330/3 // 8331/3 // 8332/3\tFollicular adenocarcinoma, NOS // Follicular adenocarcinoma well diff. // Follicular adenocarcinoma trabecular
+Adenocarcinoma in villous adenoma\t8261/3\tNA
+Pseudosarcomatous carcinoma\t8033/3\tNA
+Dedifferentiated liposarcoma\t8858/3\tNA
+Mycosis fungoides\t9700/3\tNA
+Fibrous mesothelioma, malignant\t9051/3\tNA
+Mucoepidermoid carcinoma\t8430/3\tNA
+Mixed cell adenocarcinoma\t8323/3\tNA
+Acute leukemia, NOS\t9801/3\tNA
+Plasmacytoma, NOS\t9731/3\tNA
+Dermatofibrosarcoma, NOS\t8832/3\tNA
+Intraductal papillary adenocarcinoma with invasion\t8503/3\tNA
+Carcinoma, undifferentiated type\t8020/3\tCarcinoma, undifferentiated type, NOS
+Serous cystadenoma, borderline malignancy\t8442/1\tNA
+Hairy cell leukemia\t9940/3\tNA
+Adrenal cortical carcinoma\t8370/3\tNA
+Solid carcinoma, NOS\t8230/3\tNA
+Verrucous carcinoma\t8051/3\tVerrucous carcinoma, NOS
+Spindle cell sarcoma\t8801/3\tNA
+Carcinoma, anaplastic type\t8021/3\tCarcinoma, anaplastic type, NOS
+Oxyphilic adenocarcinoma\t8290/3\tNA
+Mucin-producing adenocarcinoma\t8481/3\tNA
+Malignant melanoma, regressing\t8723/3\tNA
+Sarcoma, NOS\t8800/3\tNA
+Astrocytoma, anaplastic\t9401/3\tNA
+Phyllodes tumor, malignant\t9020/3\tNA
+Small cell tumour\t8041/3 // 8002/3\tNA
+Renal cell carcinoma, sarcomatoid\t8318/3\tNA
+Lymphoid leukemia, NOS\t9820/3\tNA
+Mucinous cystadenocarcinoma, NOS\t8470/3\tNA
+Cribriform carcinoma, NOS\t8201/3\tCribriform carcinoma
+Large cell carcinoma, NOS\t8012/3\tNA
+Basosquamous carcinoma\t8094/3\tNA
+Adenocarcinoma with squamous metaplasia (adenoacanthoma)\t8570/3\tNA
+Giant cell sarcoma\t8802/3\tNA
+Hodgkin lymphoma, NOS\t9650/3\tNA
+Mantle cell lymphoma\t9673/3\tNA
+Granulosa cell tumor, malignant\t8620/3\tNA
+Thymoma, malignant, NOS\t8580/3\tNA
+Adenoid cystic carcinoma\t8200/3\tNA
+Epithelioma, NOS\t8010/0 // 8011/3 // 8010/3\tNA
+Waldenstrom macroglobulinemia\t9761/3\tNA
+Mesothelioma, biphasic, malignant\t9053/3\tNA
+Liposarcoma, NOS\t8850/3\tNA
+Astrocytoma, NOS\t9400/3\tNA
+Malignant teratoma, undifferentiated\t9082/3\tNA
+Glioma, malignant\t9380/3\tNA
+Goblet cell carcinoid (Mucocarcinoid Tumor)\t8243/3\tNA
+NK/T-cell lymphoma, nasal and nasal-type\t9719/3\tNA
+Marginal zone B-cell lymphoma, NOS\t9699/3\tNA
+Liposarcoma, well differentiated\t8851/3\tNA
+Oligodendroglioma, NOS\t9450/3\tNA
+Carcinosarcoma, NOS\t8980/3\tNA
+Paget disease, mammary\t8540/3 // 8541/3\tNA
+Acute myeloid leukemia, minimal differentiation\t9872/3\tNA
+Balloon cell melanoma\t8722/3\tNA
+Hodgkin lymphoma, mixed cellularity\t9652/3\tHodgkin lymphoma, mixed cellularity, NOS
+Papillary microcarcinoma\t8341/3\tNA
+Precursor cell lymphoblastic leukemia, NOS\t9835/3\tNA
+Kaposi sarcoma\t9140/3\tNA
+Trichilemmocarcinoma\t8102/3\tNA
+Endometrial stromal sarcoma\t8930/3\tNA
+Cutaneous T-cell lymphoma, NOS\t9709/3\tNA
+Histology_Type\tCode\tDescription
+Myeloid sarcoma\t9930/3\tNA
+Pleomorphic carcinoma\t8022/3\tNA
+Carcinoma, diffuse type\t8145/3\tNA
+Skin appendage carcinoma\t8390/3\tNA
+Adenocarcinoid tumor\t8245/3\tNA
+Ewing sarcoma\t9260/3\tNA
+Angioimmunoblastic T-cell lymphoma\t9705/3\tNA
+Combined small cell carcinoma\t8045/3\tNA
+Myxoid leiomyosarcoma\t8896/3\tNA
+Hodgkin lymphoma, nodular lymphocyte predominance\t9659/3\tNA
+Fibrosarcoma, NOS\t8810/3\tNA
+Medull Carcinoma wAmyl Stroma\t8345/3\tNA
+Acral lentiginous melanoma\t8744/3\tAcral lentiginous melanoma, malignant这里
+Nephroblastoma, NOS\t8960/3\tNA
+Comedocarcinoma\t8501/2 // 8501/3\tComedocarcinoma, non-infiltrating // Comedocarcinoma, NOS
+Rhabdomyosarcoma, NOS\t8900/3\tNA
+Chronic myelomonocytic leukemia, NOS\t9945/3\tNA
+Dysgerminoma\t9060/3\tNA
+Gastrointestinal stromal sarcoma\t8936/3\tNA
+Basaloid squamous cell carcinoma\t8083/3\tNA
+Splenic marginal zone B-cell lymphoma\t9689/3\tNA
+Mixed glioma\t9382/3\tNA
+Composite carcinoid\t8244/3\tNA
+Papillary squamous cell carcinoma\t8052/3\tNA
+Follicular adenocarcinoma, well differentiated\t8331/3\tNA
+Essential thrombocythemia\t9962/3\tNA
+Malignant teratoma, trophoblastic\t9102/3\tNA
+Linitis plastica\t8142/3\tNA
+Spindle cell carcinoma\t8032/3\tNA
+Paget disease, extramammary\t8542/3\tNA
+Endometrioid adenocarcinoma, secretory variant\t8382/3\tNA
+Chondrosarcoma, NOS\t9220/3\tNA
+Malignant lymphoma, large B-cell, diffuse, immunoblastic, NOS\t9684/3\tNA
+Acute myelomonocytic leukemia\t9867/3\tNA
+Leukemia, NOS\t9800/3\tNA
+Intestinal T-cell lymphoma\t9717/3\tNA
+Squamous cell carcinoma, large cell, non-keratinizing\t8072/3\tNA
+Blue nevus, malignant\t8780/3\tNA
+Bronchiolo-alveolar adenocarcinoma\t8250/3\tNA
+Ependymoma, NOS\t9391/3\tNA
+Medullary carcinoma with lymphoid stroma\t8512/3\tNA
+Infiltrating duct mixed with other types of carcinoma\t8523/3\tNA
+Acute myeloid leukemia with multilineage dysplasia\t9895/3\tNA
+Basal cell carcinoma, fibroepithelial\t8093/3\tNA
+Chondroblastic osteosarcoma\t9181/3\tNA
+Adenocarcinoma with neuroendocrine differentiation\t8574/3\tNA
+Basaloid carcinoma\t8123/3\tNA
+Squamous cell carcinoma, adenoid\t8075/3\tNA
+Papillary cystadenocarcinoma\t8450/3\tPapillary cystadenocarcinoma, NOS
+Epithelioid hemangioendothelioma, malignant\t9133/3\tNA
+Mullerian mixed tumor\t8950/3\tNA
+Adenosarcoma\t8933/3\tNA
+Hodgkin lymphoma, nodular sclerosis, grade 1\t9663/3\tHodgkin lymphoma, nodular sclerosis, NOS
+Paget disease and intraductal carcinoma\t8543/3\tNA
+Acute myeloid leukemia without maturation\t9873/3\tNA
+Mixed tumor, malignant, NOS\t8940/3\tNA
+Malignant peripheral nerve sheath tumor\t9540/3\tNA
+Insulinoma (Beta-cell tumour), malignant\t8151/3\tNA
+Malignant myoepithelioma\t8982/3\tNA
+Spindle cell melanoma, type B\t8774/3\tNA
+Fibrous histiocytoma, malignant\t8830/3\tNA
+Endometrioid adenofibroma, malignant\t8381/3\tNA
+Paget disease and infiltrating duct carcinoma\t8541/3 // 8540/3\tNA
+Follicular adenocarcinoma trabecular\t8332/3\tNA
+Glycogen-rich carcinoma\t8315/3\tNA
+Merkel cell carcinoma\t8247/3\tNA
+Desmoplastic fibroma\t8823/1\tNA
+Papillary mucinous cystadenocarcinoma\t8471/3\tNA
+Pheochromocytoma, malignant\t8700/3\tPheochromocytoma
+Inflammatory carcinoma\t8530/3\tNA
+Giant cell carcinoma\t8031/3\tNA
+Olfactory neuroblastoma\t9522/3\tNA
+Primary cutaneous CD30+ T-cell lymphoproliferative disorder\t9718/3\tNA
+Acute panmyelosis with myelofibrosis\t9931/3\tNA
+Squamous cell carcinoma, spindle cell\t8074/3\tNA
+Histology_Type\tCode\tDescription
+Pleomorphic liposarcoma\t8854/3\tNA
+Carcinoma in pleomorphic adenoma\t8941/3\tNA
+Mesonephroma, malignant\t9110/3\tNA
+Choriocarcinoma, NOS\t9100/3\tChoriocarcinoma
+Pilomatrix carcinoma\t8110/3\tNA
+Paraganglioma, malignant\t8680/3\tNA
+Adenocarcinoma in adenoma polyposis coli\t8210/3\tAdenocarcinoma in adenomatous polyp
+Gemistocytic astrocytoma\t9411/3\tNA
+Hodgkin lymphoma, lymphocyte-rich\t9651/3\tNA
+Acute monocytic leukemia\t9891/3\tNA
+Myxosarcoma\t8840/3\tNA
+Neurilemmoma, malignant\t9560/3\tNA
+Intraductal micropapillary carcinoma\t8507/2\tNA
+Papillary carcinoma, encapsulated\t8343/3\tNA
+Interstitial cell tumor\t8650/3 // 8621/3 // 8650/0\tNA
+Mixed epithelioid and spindle cell melanoma\t8770/3\tNA
+Giant cell glioblastoma\t9441/3\tNA
+Clear cell sarcoma of kidney\t8964/3\tNA
+Fibrillary astrocytoma\t9420/3\tNA
+Pigmented dermatofibrosarcoma protuberans\t8833/3\tNA
+Synovial sarcoma, NOS\t9040/3\tNA
+Lymphoepithelial carcinoma\t8082/3\tNA
+Precursor T-cell lymphoblastic leukaemia\t9729/3\tNA
+Pleomorphic rhabdomyosarcoma, adult type\t8901/3\tNA
+Malignant mastocytosis\t9741/3\tNA
+Islet cell carcinoma\t8150/3\tNA
+Sertoli-Leydig cell tumor, poorly differentiated\t8631/3\tNA
+Synovial sarcoma, spindle cell\t9041/3\tNA
+Immunoproliferative disease, NOS\t9760/3\tNA
+Giant cell tumor of bone, malignant\t9250/3\tNA
+Chronic myelogenous leukemia, BCR/ABL positive\t9875/3\tNA
+Teratocarcinoma\t9081/3\tNA
+Scirrhous adenocarcinoma\t8141/3\tNA
+Precursor B-cell lymphoblastic leukemia\t9836/3\tNA
+Gliosarcoma\t9442/3\tNA
+Embryonal carcinoma, NOS\t9070/3\tNA
+Adenocarcinoma with mixed subtypes\t8255/3\tNA
+Nodular hidradenoma, malignant\t8402/3\tNA
+Hemangioblastoma\t9161/1\tNA
+Therapy-related acute myeloid leukemia, NOS\t9920/3\tNA
+Germinoma\t9064/3\tNA
+Klatskin tumor\t8162/3\tNA
+Pilocytic astrocytoma\t9421/1 // 9421/3\tPilocytic astrocytoma
+Precursor cell lymphoblastic lymphoma, NOS\t9727/3\tNA
+Plasmacytoma, extramedullary\t9734/3\tNA
+Acute myeloid leukemia, M6 type\t9840/3\tNA
+Granular cell carcinoma\t8320/3\tNA
+Hepatoid adenocarcinoma\t8576/3\tNA
+Yolk sac tumor\t9071/3\tNA
+Infiltrating lobular mixed with other types of carcinoma\t8524/3\tNA
+Chordoma, NOS\t9370/3\tNA
+Thymoma, type B1, malignant\t8583/3\tNA
+Papillary cystadenoma, borderline malignancy\t8451/1\tNA
+Choriocarcinoma combined with other germ cell elements\t9101/3\tNA
+Sebaceous adenocarcinoma\t8410/3\tNA
+Transitional cell carcinoma, spindle cell\t8122/3 // 8120/3 // 8032/3\tNA
+Atypical chronic myeloid leukemia, BCR/ABL negative\t9876/3\tNA
+Anaplastic large cell lymphoma, T-cell and Null cell type\t9714/3\tNA
+Nonencapsulated sclerosing carcinoma\t8350/3\tNA
+Struma ovarii, malignant\t9090/3\tNA
+Hemangiopericytoma, malignant\t9150/3\tNA
+Round cell liposarcoma\t8853/3\tNA
+Atypical carcinoid tumor\t8249/3\tNA
+Epithelial-myoepithelial carcinoma\t8562/3\tNA
+Mixed Hepato Bile Duct Carcinoma\t8180/3 // 8160/3 // 8170/3\tNA
+Epithelioid leiomyosarcoma\t8891/3\tNA
+Adult T-cell leukemia/lymphoma\t9827/3\tNA
+Ameloblastoma, malignant\t9310/3\tNA
+Histology_Type\tCode\tDescription
+Giant cell tumour\t9250/3 // 9251/3 // 9252/3\tGiant cell tumour of bone, malignant // Malignant giant cell tumour of soft parts // Malignant tenosynovial giant cell tumour
+Extra-adrenal paraganglioma, malignant\t8693/3\tNA
+Chronic myeloproliferative disease, NOS\t9960/3\tNA
+Hodgkin lymphoma, lymphocytic depletion\t9653/3\tHodgkin lymphoma, lymphocytic depletion, NOS
+Melanoma in giant pigmented nevus\t8761/3\tMalignant melanoma in giant pigmented nevus
+Villous adenocarcinoma\t8262/3\tNA
+Squamous cell carcinoma, small cell, non-keratinizing\t8073/3\tNA
+Glioblastoma, IDH-mutant\t9445/3\tNA
+Stromal sarcoma, NOS\t8935/3\tNA
+Oat cell carcinoma\t8042/3\tNA
+Tumor cells\t8001/0 // 8001/1 // 8001/3\tTumour cells, benign // Tumour cells, uncertain whether benign or malignant // Tumour cells, malignant
+Pancreatobiliary type carcinoma\t8163/3\tNA
+Hodgkin lymphoma, lymphocytic depletion, diffuse fibrosis\t9654/3 // 9653/3\tNA
+Myofibroblastoma\t8825/0\tNA
+Sezary syndrome\t9701/3\tNA
+Epithelioid cell melanoma\t8771/3\tNA
+Systemic EBV positive T-cell lymphoproliferative disease of childhood\t9724/3\tNA
+Malignant cystic nephroma\t8959/3\tNA
+Malignant teratoma, intermediate\t9083/3\tNA
+Vipoma\t8155/3\tNA
+Hodgkin lymphoma, nodular sclerosis, grade 2\t9663/3\tHodgkin lymphoma, nodular sclerosis, NOS
+Polycythemia vera\t9950/3\tNA
+Hodgkin granuloma\t9661/3\tNA
+Melanoma in junctional naevus\t8740/3\tMalignant melanoma in junctional nevus
+Gliomatosis cerebri\t9381/3\tNA
+Epithelioid sarcoma\t8804/3\tNA
+Secretory carcinoma of breast\t8502/3\tNA
+Meningothelial meningioma\t9531/0\tNA
+Trabecular adenocarcinoma\t8190/3\tNA
+Metaplastic carcinoma, NOS\t8575/3\tNA
+Desmoplastic nodular medulloblastoma\t9471/3 // 9470/3\tNA
+Bronchiolo-alveolar carcinoma, mucinous\t8253/3\tNA
+Prolymphocytic leukemia, T-cell type\t9834/3\tNA
+Sertoli cell carcinoma\t8640/3\tNA
+Seminoma, anaplastic\t9062/3\tNA
+Adenocarcinoma with spindle cell metaplasia\t8572/3\tNA
+B lymphoblastic leukemia/lymphoma, NOS\t9811/3\tNA
+Thymoma, type A, malignant\t8581/3\tNA
+Pituitary carcinoma, NOS\t8272/3\tNA
+Brenner tumor, malignant\t9000/3\tNA
+Histiocytic sarcoma\t9755/3\tNA
+Pulmonary blastoma\t8972/3\tNA
+Chromophobe adenocarcinoma\t8270/3 // 8140/3\tNA
+Glomangiosarcoma\t8710/3\tNA
+Hodgkin lymphoma, nodular sclerosis, cellular phase\t9663/3\tHodgkin lymphoma, nodular sclerosis, NOS
+Angiomyosarcoma\t8894/3\tNA
+Enterochromaffin cell carcinoid\t8241/3\tNA
+Eccrine adenocarcinoma\t8413/3\tNA
+Renal cell carcinoma, chromophobe type\t8317/3\tNA
+Glomus Tumor Malignant\t8711/3\tNA
+Clear cell sarcoma, NOS\t9044/3\tClear cell sarcoma, NOS (except of kidney M-8964/3)
+Ependymoma, anaplastic\t9392/3\tNA
+Small cell sarcoma\t8803/3\tNA
+Seromucinous carcinoma\t8474/3 // 8480/3 // 8140/3\tNA
+Malignant peripheral nerve sheath tumour with rhabdomyoblastic differentiation\t9561/3\tNA
+Mixed islet cell and exocrine adenocarcinoma\t8154/3\tNA
+Medulloblastoma, NOS\t9470/3\tNA
+Adenocarcinoma with cartilaginous and osseous metaplasia\t8571/3\tNA
+Superficial spreading adenocarcinoma\t8143/3\tNA
+Mesodermal mixed tumor\t8951/3\tNA
+Spindle cell tumour\t8802/3 // 8032/3 // 8800/3\tNA
+Eccrine papillary adenocarcinoma\t8408/3\tNA
+Granular cell tumor, malignant\t9580/3\tNA
+Astroblastoma\t9430/3\tNA
+Intraductal papillary-mucinous carcinoma\t8453/2 // 8453/3\tIntraductal papillary-mucinous carcinoma, non-invasive // Intraductal papillary-mucinous carcinoma, invasive
+Adenocarcinoma with apocrine metaplasia\t8573/3\tNA
+Follicular carcinoma, minimally invasive\t8335/3\tNA
+Synovial sarcoma, biphasic\t9043/3\tNA
+Acute myeloid leukemia, t(8;21)(q22;q22)\t9896/3\tNA
+Myelodysplastic/Myeloproliferative neoplasm, unclassifiable\t9975/3\tNA
+Histology_Type\tCode\tDescription
+Cloacogenic carcinoma\t8124/3\tNA
+Malignant lymphoma, mixed small and large cell, diffuse\t9675/3 // 9680/3 // 9670/3 // 9591/3\tNA
+Squamous cell carcinoma with horn formation\t8078/3\tNA
+Squamous cell carcinoma, HPV positive\t8085/3\tNA
+Malignant giant cell tumor of soft parts\t9251/3\tNA
+Metatypical carcinoma\t8095/3\tNA
+Thymoma, type B3, malignant\t8585/3\tNA
+Squamous cell carcinoma, HPV negative\t8086/3\tNA
+Endometrioid adenocarcinoma, ciliated cell variant\t8383/3\tNA
+T-cell histiocyte rich large B-cell lymphoma\t9688/3\tNA
+Alveolar rhabdomyosarcoma\t8920/3\tNA
+Alveolar adenocarcinoma\t8251/3\tNA
+Bronchiolo-alveolar carcinoma, non-mucinous\t8252/3\tNA
+Thymoma, type B2, malignant\t8584/3\tNA
+Malignant histiocytosis\t9750/3\tNA
+"
+
+codes_text_1 <- "
+Histology_Type\tCode\tDescription
+Renal cell carcinoma (RCC)\t8050, 8140, 8260, 8270, 8290, 8310, 8312, 8317, 8318\tKidney Cancer
+Transitional cell carcinoma (TCC)\t8070, 8071, 8077, 8081, 8120, 8122, 8130\tKidney Cancer
+Hepatocellular carcinoma (HCC)\t8170, 8171, 8172, 8173, 8174, 8175\tLiver Cancer
+Cholangiocarcinoma (CAC)\t8050, 8140, 8141, 8160, 8162, 8480, 8481, 8500, 8570\tLiver Cancer
+Small cell carcinoma (SCLC)\t8041, 8042, 8045, 8240, 8246\tLung Cancer
+Non-small cell carcinoma (NSCLC)\t8012, 8013, 8022, 8033, 8046, 8070, 8071, 8072, 8077, 8140, 8144, 8200, 8230, 8250, 8260, 8310, 8430, 8480, 8481, 8490, 8550, 8560, 8972, 8980\tLung Cancer
+Squamous cell carcinoma (ESCC)\t8140, 8144, 8145, 8260, 8263, 8480, 8481, 8490\tEsophageal Cancer
+Adenocarcinoma (EAC)\t8070, 8071, 8072, 8077\tEsophageal Cancer
+"
+
+codes_text_2 <- "
+Histology_Type\tCode\tDescription
+Glioma\t9380, 9381, 9382, 9390, 9391, 9392, 9393, 9395, 9400, 9401, 9411, 9420, 9423, 9424, 9425, 9430, 9440, 9441, 9442, 9450, 9451, 9460, 9470, 9471, 9472, 9473, 9474, 9480\tBrain Cancer
+Non-Hodgkin Lymphoma\t9590, 9591, 9596, 9597, 9670, 9671, 9673, 9675, 9678, 9679, 9680, 9684, 9687, 9688, 9689, 9690, 9691, 9695, 9698, 9699, 9700, 9701, 9702, 9705, 9708, 9709, 9712, 9714, 9716, 9717, 9718, 9719, 9726, 9727, 9728, 9729, 9731, 9732, 9734, 9735, 9737, 9738, 9760, 9761, 9764, 9820, 9823, 9826, 9827, 9831, 9832, 9833, 9834, 9835, 9836, 9837, 9940, 9948\tNon-Hodgkin Lymphoma
+Diffuse large B-cell lymphoma (DLBCL)\t9678, 9679, 9680, 9684, 9688, 9712, 9735, 9737, 9738\tNon-Hodgkin Lymphoma
+Follicular lymphoma (FL)\t9690, 9691, 9695, 9698\tNon-Hodgkin Lymphoma
+Chronic lymphocytic leukemia/Small lymphocytic lymphoma (CLL/SLL)\t9670, 9823\tNon-Hodgkin Lymphoma
+Marginal-zone lymphoma (MZL)\t9689, 9699, 9760, 9764\tNon-Hodgkin Lymphoma
+"
+
+codes_text2 <- paste(codes_text_1, codes_text_2, sep = "\n")
+
+incident <- readRDS("incident.rds")
+codes <- read.table(text = codes_text, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+incident$cancer_code <- NA
+for (i in 1:nrow(incident)) {
+  sub_type <- incident$cancer_sub_type[i]
+  matching_indices <- grep(paste0("^", sub_type, "$"), codes$Histology_Type, ignore.case = TRUE)
+  if (length(matching_indices) > 0) {
+    matching_codes <- codes$Code[matching_indices]
+    incident$cancer_code[i] <- paste(matching_codes, collapse = " // ")
+  } else {
+    incident$cancer_code[i] <- "Not Found"
+  }
+}
+
+codes2 <- read.table(text = codes_text2, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+saveRDS(codes2, "codes.rds")
+
+incident$cancer_historical_type <- NA
+for (i in 1:nrow(incident)) {
+  codes_in_row <- incident$cancer_code[i]
+  cancer_name <- incident$cancer_name[i]
+  matching_types <- c()
+  
+  if (codes_in_row != "Not Found" && !is.na(codes_in_row)) {
+    codes_list <- unlist(strsplit(codes_in_row, " // "))
+    codes_list <- sub("/.*", "", codes_list)
+    potential_matches <- codes2[grepl(cancer_name, codes2$Description, ignore.case = TRUE), ]
+    
+    for (j in 1:nrow(potential_matches)) {
+      codes_for_type <- unlist(strsplit(potential_matches$Code[j], ", "))
+      if (any(codes_list %in% codes_for_type)) {
+        matching_types <- c(matching_types, potential_matches$Histology_Type[j])
+      }
+    }
+  }
+  
+  if (length(matching_types) > 0) {
+    incident$cancer_historical_type[i] <- paste(unique(matching_types), collapse = " // ")
+  } else {
+    incident$cancer_historical_type[i] <- "Not Found"
+  }
+}
+
+saveRDS(incident, "subcancer_clean.rds")
+
+covariates_model1 <- c("Age", "Sex", "Race")
+covariates_model2 <- c("Age","Sex","Race","UK_Center",
+                       "Education","Employment","Townsend_deprivation_index",
+                       "Income", "Smoking_status", "Alcohol_status", 
+                       "day_exposure", "diet_score", "sleep_score")
+covariates_model3 <- c("Age","Sex","Race","Diastolic_blood_pressure",
+                       "Systolic_blood_pressure","BMI","UK_Center",
+                       "Employment","Education","Smoking_status","Alcohol_status",
+                       "Hand_grip","day_exposure","diet_score", "depress_mood",
+                       "sleep_score","Townsend_deprivation_index",
+                       "Waist_to_hip_ratio","Family_cancer",
+                       "Overall_health_rating","Income")
+
+model_formulas <- list(
+  Model1 = paste(" + ", paste(covariates_model1, collapse = " + "), sep = ""),
+  Model2 = paste(" + ", paste(covariates_model2, collapse = " + "), sep = ""),
+  Model3 = paste(" + ", paste(covariates_model3, collapse = " + "), sep = "")
+)
+
+results_df <- data.frame(
+  sex = character(),
+  exposure = character(),
+  model = character(),
+  HR = numeric(),
+  CI_lower = numeric(),
+  CI_upper = numeric(),
+  CI = character(),
+  Pvalue = numeric(),
+  total_samples = integer(),
+  exposed_samples = integer(),
+  outcome_type = character(),
+  stringsAsFactors = FALSE
+)
+
+fit_and_extract_results <- function(data, covariate, sex, model_name, exposure){
+  for (type in unique(data$cancer_historical_type[data$cancer_historical_type != "Not Found"])) {
+    temp_data <- data  %>%
+      filter(Sex == !!sex & (cancer_historical_type == !!type | indicator == 0))
+    
+    model_formula <- model_formulas[[model_name]]
+    formula_str <- paste("Surv(temp_data$age_entry,temp_data$age_event, temp_data$indicator) ~", exposure, model_formula)
+    cox_model <- coxph(as.formula(formula_str), data = temp_data)
+    summary_model <- summary(cox_model)
+    coef_table <- as.data.frame(summary_model$coefficients)
+    
+    HR <- exp(coef_table[exposure, "coef"])
+    lower_ci <- exp(coef_table[exposure, "coef"] - 1.96 * coef_table[exposure, "se(coef)"])
+    upper_ci <- exp(coef_table[exposure, "coef"] + 1.96 * coef_table[exposure, "se(coef)"])
+    p_value <- coef_table[exposure, "Pr(>|z|)"]
+    
+    incident_cases <- sum(temp_data$indicator == 1, na.rm = TRUE)
+    total_cases <- nrow(temp_data)
+    
+    results_df <<- rbind(results_df, data.frame(
+      sex = sex,
+      exposure = exposure,
+      model = model_name,
+      HR = HR,
+      CI_lower = lower_ci,
+      CI_upper = upper_ci,
+      CI = paste0("[", lower_ci, "-", upper_ci, "]"),
+      Pvalue = p_value,
+      total_samples = total_cases,
+      exposed_samples = incident_cases,
+      outcome_type = type
+    ))
+  }
+}
+
+fit_and_extract_results(incident, model_formulas$Model3,"Male","Model3","isolation")
+fit_and_extract_results(incident, model_formulas$Model2,"Male","Model2","isolation")
+fit_and_extract_results(incident, model_formulas$Model1,"Male","Model1","isolation")
+fit_and_extract_results(incident, model_formulas$Model1,"Male","Model1","loneliness")
+fit_and_extract_results(incident, model_formulas$Model2,"Male","Model2","loneliness")
+fit_and_extract_results(incident, model_formulas$Model3,"Male","Model3","loneliness")
+fit_and_extract_results(incident, model_formulas$Model1,"Female","Model1","isolation")
+fit_and_extract_results(incident, model_formulas$Model2,"Female","Model2","isolation")
+fit_and_extract_results(incident, model_formulas$Model3,"Female","Model3","isolation")
+fit_and_extract_results(incident, model_formulas$Model1,"Female","Model1","loneliness")
+fit_and_extract_results(incident, model_formulas$Model2,"Female","Model2","loneliness")
+fit_and_extract_results(incident, model_formulas$Model3,"Female","Model3","loneliness")
+
+saveRDS(results_df, "cox_historical_cancer_total.rds")
+
+results_df <- readRDS("cox_historical_cancer_total.rds")
+df_unique <- results_df
+
+df_unique$outcome_type <- gsub(
+  "Non-Hodgkin Lymphoma // Diffuse large B-cell lymphoma \\(DLBCL\\)", 
+  "Diffuse large B-cell lymphoma (DLBCL)", 
+  df_unique$outcome_type
+)
+df_unique$outcome_type <- gsub(
+  "Non-Hodgkin Lymphoma // Follicular lymphoma \\(FL\\)", 
+  "Follicular lymphoma (FL)", 
+  df_unique$outcome_type
+)
+df_unique$outcome_type <- gsub(
+  "Non-Hodgkin Lymphoma // Chronic lymphocytic leukemia/Small lymphocytic lymphoma \\(CLL/SLL\\)", 
+  "Chronic lymphocytic leukemia or \n     Small lymphocytic lymphoma (CLL/SLL)", 
+  df_unique$outcome_type
+)
+df_unique$outcome_type <- paste0(strrep(" ", 5), df_unique$outcome_type)
+
+group_mapping <- list(
+  "Lung cancer" = c(
+    "     Non-small cell carcinoma (NSCLC)",
+    "     Small cell carcinoma (SCLC)"
+  ),
+  "Non-Hodgkin Lymphoma" = c(
+    "     Diffuse large B-cell lymphoma (DLBCL)",
+    "     Chronic lymphocytic leukemia or \n     Small lymphocytic lymphoma (CLL/SLL)",
+    "     Follicular lymphoma (FL)",
+    "     Non-Hodgkin Lymphoma"
+  ),
+  "Kidney cancer" = c("     Renal cell carcinoma (RCC)", "     Transitional cell carcinoma (TCC)"),
+  "Liver cancer" = c("     Hepatocellular carcinoma (HCC)", "     Cholangiocarcinoma (CAC)"),
+  "Esophageal cancer" = c("     Adenocarcinoma (EAC)", "     Squamous cell carcinoma (ESCC)"),
+  "Brain cancer" = c("     Glioma")
+)
+
+plot_forest_adjusted <- function(data, exposure_suffix, sex_dat, title, model_dat) {
+  fp_data <- data %>%
+    filter(exposure == exposure_suffix & sex == sex_dat & model == model_dat) %>%
+    dplyr::select(total_samples, exposed_samples, outcome_type, Pvalue, CI, HR, CI_lower, CI_upper) %>%
+    filter(!is.na(HR))
+  
+  if (nrow(fp_data) == 0) {
+    stop("Filtered data has no rows. Please check parameters.")
+  }
+  
+  result <- data.frame()
+  for (group in names(group_mapping)) {
+    subtypes <- group_mapping[[group]]
+    group_data <- fp_data[fp_data$outcome_type %in% subtypes, ]
+    
+    title_row <- as.data.frame(matrix(" ", nrow = 1, ncol = ncol(fp_data)))
+    colnames(title_row) <- colnames(fp_data)
+    title_row$outcome_type <- group
+    
+    result <- rbind(result, title_row, group_data)
+  }
+  
+  unassigned <- fp_data[!fp_data$outcome_type %in% unlist(group_mapping), ]
+  if (nrow(unassigned) > 0) {
+    unassigned_title <- as.data.frame(matrix(NA, nrow = 1, ncol = ncol(fp_data)))
+    colnames(unassigned_title) <- colnames(fp_data)
+    unassigned_title$outcome_type <- "Unassigned"
+    result <- rbind(result, unassigned_title, unassigned)
+  }
+  
+  fp_data <- result
+  dt <- fp_data
+  
+  dt$" " <- paste(rep(" ", 20), collapse = " ")
+  dt$"HR(95%CI)" <- ifelse(is.na(as.numeric(dt$HR)), "",
+                           sprintf('%.2f (%.2f - %.2f)', as.numeric(dt$HR), as.numeric(dt$CI_lower), as.numeric(dt$CI_upper)))
+  
+  dt$Total_Count_Exposed_Count <- ifelse(is.na(as.numeric(dt$HR)), "",
+                                         paste(dt$total_samples, "(", dt$exposed_samples, ")", sep = ""))
+  colnames(dt)[ncol(dt)] <- "Total(Exposed)"
+  
+  dt$"Psig" <- ifelse(is.na(as.numeric(dt$Pvalue)), "",
+                      ifelse(as.numeric(dt$Pvalue) <= 0.001, "***",
+                             ifelse(as.numeric(dt$Pvalue) <= 0.01, "**",
+                                    ifelse(as.numeric(dt$Pvalue) <= 0.05, "*", ""))))
+  dt$Pvalue <- ifelse(is.na(as.numeric(dt$Pvalue)), "",
+                      ifelse(as.numeric(dt$Pvalue) < 0.0001, "<0.0001",
+                             sprintf("%.4f", as.numeric(dt$Pvalue))))
+  
+  p <- forest(dt[, c(3, 11, 9:10, 4, 12)],
+              est = as.numeric(dt$HR),
+              lower = as.numeric(dt$CI_lower),
+              upper = as.numeric(dt$CI_upper),
+              sizes = 0.6,
+              ci_column = 3,
+              ref_line = 1,
+              arrow_lab = c("lower risk", "higher risk"),
+              xlim = c(0, 4),
+              ticks_at = c(0, 1, 2, 3, 4),
+              footnote = title
+  )
+  
+  print(p)
+  pdf(paste(title, ".pdf", sep = ""), width = 100, height = 100)
+  print(p)
+  dev.off()
+}
+
+plot_forest_adjusted(df_unique, "isolation", "Male", "isolation_male_model1", "Model1")
+plot_forest_adjusted(df_unique, "isolation", "Male", "isolation_male_model2", "Model2")
+plot_forest_adjusted(df_unique, "isolation", "Male", "isolation_male_model3", "Model3")
+plot_forest_adjusted(df_unique, "isolation", "Female", "isolation_female_model1", "Model1")
+plot_forest_adjusted(df_unique, "isolation", "Female", "isolation_female_model2", "Model2")
+plot_forest_adjusted(df_unique, "isolation", "Female", "isolation_female_model3", "Model3")
+
+plot_forest_adjusted(df_unique, "loneliness", "Male", "lonely_male_model1", "Model1")
+plot_forest_adjusted(df_unique, "loneliness", "Male", "lonely_male_model2", "Model2")
+plot_forest_adjusted(df_unique, "loneliness", "Male", "lonely_male_model3", "Model3")
+plot_forest_adjusted(df_unique, "loneliness", "Female", "lonely_female_model1", "Model1")
+plot_forest_adjusted(df_unique, "loneliness", "Female", "lonely_female_model2", "Model2")
+plot_forest_adjusted(df_unique, "loneliness", "Female", "lonely_female_model3", "Model3")
